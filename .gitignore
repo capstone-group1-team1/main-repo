@@ -1,0 +1,103 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+
+# ==========================
+# Environment variables
+# ==========================
+.env
+.env.*
+!.env.example
+
+# ==========================
+# IDEs
+# ==========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==========================
+# OS files
+# ==========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================
+# Node / Next.js
+# ==========================
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/npm-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# ==========================
+# Logs
+# ==========================
+*.log
+logs/
+*.pid
+
+# ==========================
+# Build artifacts
+# ==========================
+dist/
+build/
+*.egg-info/
+
+# ==========================
+# Jupyter
+# ==========================
+.ipynb_checkpoints/
+
+# ==========================
+# Evaluation outputs
+# ==========================
+eval/reports/*
+!eval/reports/.gitkeep
+
+# ==========================
+# Local data
+# ==========================
+backend/app/ingestion/hash_store.json
+
+# Local vector DB (if any)
+weaviate_data/
+neo4j_data/
+
+# ==========================
+# Docker
+# ==========================
+docker-compose.override.yml
+
+# ==========================
+# Temporary files
+# ==========================
+tmp/
+temp/
+*.tmp
+*.bak
