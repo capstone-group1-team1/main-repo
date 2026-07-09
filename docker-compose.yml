@@ -1,0 +1,112 @@
+# ============================================================================
+# Full four-service stack (Module 10):  neo4j + weaviate + api + web.
+#   docker compose up -d --build
+#
+# Readiness ordering:
+#   neo4j ─┐
+#          ├─► api ─► web
+#   weaviate ─┘
+# api waits for both stores to be healthy; web waits for api to be healthy.
+# ============================================================================
+services:
+  neo4j:
+    image: neo4j:5.26
+    container_name: smartoffice-neo4j
+    ports:
+      - "7474:7474"   # browser UI
+      - "7687:7687"   # bolt
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-smartoffice123}
+      NEO4J_dbms_memory_heap_max__size: 1G
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    container_name: smartoffice-weaviate
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: "none"
+      CLUSTER_HOSTNAME: "node1"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: smartoffice-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Inside the compose network, reach the stores by service name.
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-smartoffice123}
+      WEAVIATE_HOST: weaviate
+      WEAVIATE_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-BAAI/bge-large-en-v1.5}
+      CORS_ORIGINS: http://localhost:3000
+      ENABLE_GRAPH_ENRICHMENT: ${ENABLE_GRAPH_ENRICHMENT:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PROJECT_ROOT: /app
+      # HuggingFace model cache location. Pointing it at a mounted volume
+      # (below) means bge-large + bge-reranker (~1.8 GB) download ONCE and
+      # persist across container restarts / rebuilds, instead of re-downloading
+      # every clean start.
+      HF_HOME: /models
+    volumes:
+      # so seeded data / manifest / manuals are visible to the container.
+      # mounted at BOTH paths: /app/data (where PROJECT_ROOT=/app expects it)
+      # and /data (fallback if PROJECT_ROOT is unset) — belt and suspenders.
+      - ./data:/app/data
+      - ./data:/data
+      # persist the downloaded HuggingFace models (see HF_HOME above)
+      - hf_models:/models
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
+    healthcheck:
+      # python:slim has no curl — use stdlib urllib against the liveness probe.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    container_name: smartoffice-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  neo4j_data:
+  weaviate_data:
+  hf_models:
