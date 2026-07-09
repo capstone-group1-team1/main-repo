@@ -1,0 +1,17 @@
+incident_id,device_id,date,problem,resolution,technician
+I001,DSP-001,2026-02-15,No signal on HDMI 1,HDMI cable between Codec EQ and display replaced,Omar
+I002,AMR-001,2026-03-18,AirMedia receiver offline,Restarted AirMedia service from the web interface,Ali
+I003,AP-001,2026-01-22,Wi-Fi drops in Reception,Changed AP channel from 6 to 11 to avoid interference,Ali
+I004,CP4-001,2026-02-02,Touch screen not responding to CP4,Re-paired TST-1080 with CP4 and rebooted the processor,Sara
+I005,SW-001,2026-01-10,Port 12 flapping,Replaced patch cable on port 12 and reset the interface,Omar
+I006,VCC-001,2026-03-01,No audio in video calls,Ceiling Mic Pro cable reseated and audio gain recalibrated,Sara
+I007,AMT-001,2026-03-20,Adapter fails to pair,Re-paired AM-TX3-100 with the receiver using the pairing button,Ali
+I008,DSP-001,2026-04-04,Display does not power on with system,Enabled HDMI-CEC (Anynet+) in display settings,Sara
+I009,RTR-001,2026-01-05,Internet outage entire office,Router rebooted after WAN interface hang; firmware updated,Omar
+I010,AMR-001,2026-04-12,Wireless presentation lags badly,Moved receiver traffic to 5 GHz SSID; interference reduced,Ali
+I011,MIC-001,2026-04-18,Echo during conferences,Adjusted microphone placement and enabled echo cancellation,Sara
+I012,SW-001,2026-02-25,VLAN 20 devices unreachable,Fixed trunk configuration on uplink port to router,Omar
+I013,TSC-001,2026-03-08,Touch screen battery drains fast,Reduced screen brightness and updated firmware,Sara
+I014,VCC-001,2026-05-02,Camera not detected after power cut,Codec EQ factory settings restored from backup and re-registered,Ali
+I015,DSP-001,2026-05-10,Wrong input shown on meeting start,CP4 program updated to force HDMI 2 selection on start,Sara
+I016,AP-001,2026-05-21,Clients cannot get IP on guest SSID,DHCP scope on router extended; AP rebooted,Omar

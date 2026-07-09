@@ -1,0 +1,11 @@
+asset_id,device_name,manufacturer,model,serial_number,room,installation_date,warranty_expiry,status,firmware_version,aliases
+RTR-001,Cisco ISR 1111 Router,Cisco,ISR 1111,FGL2534L0QA,Server Room,2024-03-10,2027-03-10,Active,17.9.4a,router;isr1111;isr 1111
+SW-001,Cisco Catalyst 9200L Switch,Cisco,C9200L-24P-4G,JAE2601F2KD,Server Room,2024-03-10,2027-03-10,Active,17.12.3,switch;catalyst 9200;c9200l;9200l
+AP-001,Cisco Catalyst 9115AXI Access Point,Cisco,C9115AXI-E,KWC263400ZR,Office,2024-03-12,2027-03-12,Active,17.12.3,access point;9115axi;9115;wifi;wi-fi;ap
+CP4-001,Crestron CP4 Control Processor,Crestron,CP4,C4A1234567,Meeting Room,2024-04-02,2027-04-02,Active,2.8001.0075,cp4;control processor
+TSC-001,Crestron TST-1080 Touch Screen,Crestron,TST-1080,T1B7654321,Meeting Room,2024-04-02,2027-04-02,Active,1.005.0064,tst-1080;tst 1080;touch screen;touch panel;touchscreen
+AMR-001,Crestron AirMedia Receiver,Crestron,AM-3100-WF,A3C1122334,Meeting Room,2024-04-05,2027-04-05,Active,4.2.35,airmedia;am-3100;am 3100;airmedia receiver
+AMT-001,Crestron AirMedia Connect Adapter,Crestron,AM-TX3-100,A3T5566778,Meeting Room,2024-04-05,2027-04-05,Active,1.4919.00025,am-tx3;connect adapter;airmedia adapter;dongle
+VCC-001,Cisco Codec EQ,Cisco,Codec EQ,FOC2712P1LX,Meeting Room,2024-04-08,2027-04-08,Active,RoomOS 11.14,codec eq;codec;room kit eq;video codec
+MIC-001,Cisco Ceiling Microphone Pro,Cisco,Ceiling Mic Pro,FOC2712M9QT,Meeting Room,2024-04-08,2027-04-08,Active,RoomOS 11.14,ceiling mic;microphone;mic pro;ceiling microphone
+DSP-001,Samsung QMC75 Display,Samsung,QM75C,SM75QMC0091,Meeting Room,2024-04-08,2026-04-08,Active,1052.3,qmc75;qm75c;display;screen;tv
