@@ -1,0 +1,42 @@
+# --- Web framework ---
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+starlette==0.45.3          # used directly by the metrics/request-id middlewares
+
+# --- Config & models ---
+pydantic==2.10.6
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# --- Data stores & LLM ---
+weaviate-client==4.10.4
+neo4j==5.27.0
+groq==0.18.0
+google-genai==2.8.0
+
+# --- Embeddings (local bge-large-en-v1.5) ---
+
+torch==2.5.1
+transformers==4.48.3
+huggingface-hub==0.25.2
+sentence-transformers==3.4.1
+
+# --- Semantic chunking (LlamaIndex) ---
+llama-index-core==0.12.19
+llama-index-embeddings-huggingface==0.5.1
+
+# --- PDF text extraction (manuals are text-based PDFs) ---
+pypdf==5.3.0
+
+# --- Resilience / HTTP ---
+tenacity==9.0.0
+httpx==0.28.1
+
+# --- Observability (Module 11: metrics) ---
+prometheus-client==0.21.1
+
+# --- Evaluation harness ---
+numpy==2.2.3               # seeded runs in eval/run_eval.py
+
+# --- Tests ---
+pytest==8.3.4
