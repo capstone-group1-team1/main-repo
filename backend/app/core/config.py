@@ -68,6 +68,26 @@ class Settings(BaseSettings):
     reranker_model_name: str = "BAAI/bge-reranker-base"
     rerank_candidate_pool: int = 20   # merged items to score before trimming
 
+    # --- Query router (tunable, was hardcoded in query_router.py) ---
+    router_rule_margin_threshold: float = 0.25   # rule margin below this = unsure
+    router_fallback_conf_threshold: float = 0.60 # LLM fallback below this = HYBRID
+
+    # --- Graph retrieval limits (tunable, were hardcoded in graph_retriever) ---
+    graph_max_facts: int = 15         # facts returned per question
+    graph_neighbor_limit: int = 10    # neighbours per device query
+    graph_incident_limit: int = 10    # incidents per device query
+    graph_enrichment_limit: int = 8   # enrichment facts per device query
+
+    # --- Retrieval cache (same question+route need not re-search) ---
+    retrieval_cache_enabled: bool = True
+    retrieval_cache_size: int = 256
+
+    # --- Rate limiting ---
+    rate_limit_enabled: bool = True
+    rate_limit_chat: str = "20/minute"      # POST /chat
+    rate_limit_write: str = "10/minute"     # incident/replace writes
+    rate_limit_default: str = "120/minute"  # everything else
+
     # --- Backend behaviour ---
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     hash_store_path: str = str(_PROJECT_ROOT / "data" / "ingest_manifest.sqlite")
