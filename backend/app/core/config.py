@@ -25,7 +25,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 import os
 
 _ENV_ROOT = os.environ.get("PROJECT_ROOT")
-_PROJECT_ROOT = Path(_ENV_ROOT).resolve() if _ENV_ROOT else Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = (
+    Path(_ENV_ROOT).resolve() if _ENV_ROOT else Path(__file__).resolve().parents[3]
+)
 load_dotenv(_PROJECT_ROOT / ".env")
 
 
@@ -62,21 +64,29 @@ class Settings(BaseSettings):
     chunk_buffer_size: int = 1
 
     # --- Retrieval + re-ranking (tunable, was hardcoded) ---
-    retrieval_top_k: int = 5          # vector candidates per device
-    max_evidence: int = 10            # evidence items sent to the LLM
+    retrieval_top_k: int = 5  # vector candidates per device
+    max_evidence: int = 10  # evidence items sent to the LLM
     rerank_enabled: bool = True
     reranker_model_name: str = "BAAI/bge-reranker-base"
-    rerank_candidate_pool: int = 20   # merged items to score before trimming
+    rerank_candidate_pool: int = 20  # merged items to score before trimming
+
+    # --- Hybrid (vector + BM25) search within the RAG branch ---
+    # Weaviate's hybrid search fuses dense (vector/semantic) and sparse
+    # (BM25/keyword) scores in one call. alpha=1.0 is pure vector, alpha=0.0
+    # is pure BM25; 0.5 weighs them equally. Keyword matching catches exact
+    # model numbers / error codes that a semantic embedding can under-weight.
+    hybrid_search_enabled: bool = True
+    hybrid_search_alpha: float = 0.5
 
     # --- Query router (tunable, was hardcoded in query_router.py) ---
-    router_rule_margin_threshold: float = 0.25   # rule margin below this = unsure
-    router_fallback_conf_threshold: float = 0.60 # LLM fallback below this = HYBRID
+    router_rule_margin_threshold: float = 0.25  # rule margin below this = unsure
+    router_fallback_conf_threshold: float = 0.60  # LLM fallback below this = HYBRID
 
     # --- Graph retrieval limits (tunable, were hardcoded in graph_retriever) ---
-    graph_max_facts: int = 15         # facts returned per question
-    graph_neighbor_limit: int = 10    # neighbours per device query
-    graph_incident_limit: int = 10    # incidents per device query
-    graph_enrichment_limit: int = 8   # enrichment facts per device query
+    graph_max_facts: int = 15  # facts returned per question
+    graph_neighbor_limit: int = 10  # neighbours per device query
+    graph_incident_limit: int = 10  # incidents per device query
+    graph_enrichment_limit: int = 8  # enrichment facts per device query
 
     # --- Retrieval cache (same question+route need not re-search) ---
     retrieval_cache_enabled: bool = True
@@ -84,15 +94,15 @@ class Settings(BaseSettings):
 
     # --- Rate limiting ---
     rate_limit_enabled: bool = True
-    rate_limit_chat: str = "20/minute"      # POST /chat
-    rate_limit_write: str = "10/minute"     # incident/replace writes
+    rate_limit_chat: str = "20/minute"  # POST /chat
+    rate_limit_write: str = "10/minute"  # incident/replace writes
     rate_limit_default: str = "120/minute"  # everything else
 
     # --- Backend behaviour ---
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     hash_store_path: str = str(_PROJECT_ROOT / "data" / "ingest_manifest.sqlite")
     enable_graph_enrichment: bool = True
-    extraction_char_limit: int = 6000     # chunk text sent to the enrichment LLM
+    extraction_char_limit: int = 6000  # chunk text sent to the enrichment LLM
     log_level: str = "INFO"
 
     @property
@@ -112,6 +122,7 @@ def get_settings() -> Settings:
 # ---------------------------------------------------------------------------
 # Client factories.  Cached: one driver / client / model per process.
 # ---------------------------------------------------------------------------
+
 
 @lru_cache
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=1, max=15))

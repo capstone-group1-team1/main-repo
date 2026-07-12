@@ -1,10 +1,13 @@
 """
 vector_retriever.py — the RAG branch.
 
-Embeds the question (bge query prefix) once and searches Weaviate. If the
-router matched one or more devices, we search PER DEVICE and union the results
-(so a question mentioning two devices retrieves evidence for both, not just
-the first). If no device matched, we do a single unfiltered search.
+Embeds the question (bge query prefix) once and searches Weaviate using
+HYBRID search (dense vector + sparse BM25 fused in one call) so an exact
+model number or error code in the question is matched even when the
+embedding alone under-weights it. If the router matched one or more devices,
+we search PER DEVICE and union the results (so a question mentioning two
+devices retrieves evidence for both, not just the first). If no device
+matched, we do a single unfiltered search.
 
 Returns RetrievedChunk objects (text + FULL citation metadata) plus
 RetrievalSignals for confidence.
@@ -29,14 +32,14 @@ def retrieve(
     query_vec = embed_query(question)  # embed once, reuse across devices
 
     if not device_ids:
-        chunks = search(query_vec, k=k, device_id=None)
+        chunks = search(query_vec, query_text=question, k=k, device_id=None)
     else:
         # search each matched device, then dedupe by chunk_id preserving the
         # best (first-seen) order.
         seen: set[str] = set()
         chunks = []
         for did in device_ids:
-            for c in search(query_vec, k=k, device_id=did):
+            for c in search(query_vec, query_text=question, k=k, device_id=did):
                 if c.chunk_id in seen:
                     continue
                 seen.add(c.chunk_id)
