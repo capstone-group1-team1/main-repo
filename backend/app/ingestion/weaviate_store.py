@@ -15,7 +15,7 @@ from weaviate.classes.config import Configure, DataType, Property
 from weaviate.classes.query import Filter, MetadataQuery
 from weaviate.util import generate_uuid5
 
-from app.core.config import get_weaviate_client
+from app.core.config import get_settings, get_weaviate_client
 from app.core.logging import get_logger
 from app.models.schemas import RetrievedChunk
 
@@ -80,15 +80,33 @@ def count_chunks() -> int:
 
 def search(
     query_vector: list[float],
+    query_text: str = "",
     k: int = 5,
     device_id: Optional[str] = None,
 ) -> list[RetrievedChunk]:
-    """Vector search.  Optional device filter (from the router's extracted
-    entity); if the filtered search finds < 2 hits we retry unfiltered so an
-    over-strict entity match never starves retrieval."""
+    """Hybrid search: fuses dense (vector/semantic) and sparse (BM25/keyword)
+    scoring in one Weaviate call, so an exact model number or error code in
+    the question is matched even if the embedding under-weights it. Falls
+    back to pure vector search if hybrid is disabled or `query_text` is empty
+    (e.g. a caller that only has a vector, no source text).
+
+    Optional device filter (from the router's extracted entity); if the
+    filtered search finds < 2 hits we retry unfiltered so an over-strict
+    entity match never starves retrieval."""
     col = get_weaviate_client().collections.get(COLLECTION)
+    settings = get_settings()
+    use_hybrid = settings.hybrid_search_enabled and bool(query_text.strip())
 
     def _run(filters):
+        if use_hybrid:
+            return col.query.hybrid(
+                query=query_text,
+                vector=query_vector,
+                alpha=settings.hybrid_search_alpha,
+                limit=k,
+                filters=filters,
+                return_metadata=MetadataQuery(score=True),
+            )
         return col.query.near_vector(
             near_vector=query_vector,
             limit=k,
@@ -104,7 +122,12 @@ def search(
     chunks: list[RetrievedChunk] = []
     for obj in res.objects:
         p = obj.properties
-        similarity = 1.0 - float(obj.metadata.distance or 1.0)  # cosine
+        if use_hybrid:
+            # hybrid's fused score is already in a comparable [0,1]-ish range
+            # for ranking purposes; clamp defensively.
+            similarity = float(obj.metadata.score or 0.0)
+        else:
+            similarity = 1.0 - float(obj.metadata.distance or 1.0)  # cosine
         chunks.append(
             RetrievedChunk(
                 chunk_id=p["chunk_id"],
