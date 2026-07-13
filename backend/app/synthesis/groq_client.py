@@ -1,19 +1,15 @@
-"""
-groq_client.py — the single thin LLM gateway.
+"""Shared xAI / Groq LLM gateway.
 
-Every generation call in the answer path goes through generate(). Primary
-provider is Groq (openai/gpt-oss-120b). If Groq is rate-limited or otherwise
-unavailable, and a Gemini key is configured, we transparently fall back to
-Gemini (gemini-2.5-flash via the new google-genai SDK). Swapping or extending
-providers later means changing THIS file only.
+Every LLM operation uses xAI / Grok 4.5 first. Only transient xAI provider
+failures use the Groq / Llama 4 Scout fallback. The filename is retained for
+compatibility with existing imports.
 """
 
 from __future__ import annotations
 
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-from app.core.config import get_gemini_client, get_groq_client, get_settings
+from app.core.config import get_groq_client, get_settings, get_xai_client
 from app.core.logging import get_logger
+from app.synthesis.output_guard import final_content, load_json_content
 
 log = get_logger(__name__)
 
@@ -22,73 +18,101 @@ class LLMUnavailable(Exception):
     pass
 
 
-def _is_rate_limit(exc: Exception) -> bool:
-    """Detect Groq rate-limit / quota exhaustion. Groq raises a
-    RateLimitError (HTTP 429); we also match on status/text defensively so a
-    provider-side wording change doesn't silently disable the fallback."""
-    name = exc.__class__.__name__.lower()
-    if "ratelimit" in name:
-        return True
+def _status_code(exc: Exception) -> int | None:
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
-    if status == 429:
+    return status if isinstance(status, int) else None
+
+
+def _is_transient_xai_error(exc: Exception) -> bool:
+    """Return true only for failures eligible for the Groq fallback."""
+    status = _status_code(exc)
+    if status == 429 or (status is not None and 500 <= status <= 599):
         return True
-    text = str(exc).lower()
-    return "rate limit" in text or "quota" in text or "429" in text
+    name = exc.__class__.__name__.lower()
+    return "timeout" in name or "connection" in name
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10),
-       reraise=True)
-def _call_groq(system: str, user: str, temperature: float) -> str:
-    resp = get_groq_client().chat.completions.create(
-        model=get_settings().groq_model,
-        messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": user}],
+def _error_label(exc: Exception) -> str:
+    status = _status_code(exc)
+    return f"HTTP {status}" if status is not None else exc.__class__.__name__
+
+
+def _messages(system: str, user: str) -> list[dict[str, str]]:
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _call_xai_text(system: str, user: str, temperature: float) -> str:
+    resp = get_xai_client().chat.completions.create(
+        model=get_settings().xai_model,
+        messages=_messages(system, user),
         temperature=temperature,
         max_tokens=800,
     )
-    usage = resp.usage
-    log.info("LLM call (groq): prompt=%s completion=%s tokens",
-             usage.prompt_tokens, usage.completion_tokens)
-    return resp.choices[0].message.content or ""
+    return final_content(resp.choices[0].message.content)
 
 
-def _call_gemini(system: str, user: str, temperature: float) -> str:
-    """Fallback via the new google-genai SDK. Gemini has no separate 'system'
-    role in generate_content, so we pass it as system_instruction."""
-    client = get_gemini_client()
-    if client is None:
-        raise LLMUnavailable("Gemini fallback not configured (no GEMINI_API_KEY)")
-    from google.genai import types
-
-    resp = client.models.generate_content(
-        model=get_settings().gemini_model,
-        contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            temperature=temperature,
-            max_output_tokens=800,
-        ),
+def _call_xai_json(system: str, user: str, temperature: float) -> dict:
+    resp = get_xai_client().chat.completions.create(
+        model=get_settings().xai_model,
+        messages=_messages(system, user),
+        temperature=temperature,
+        max_tokens=800,
+        response_format={"type": "json_object"},
     )
-    log.info("LLM call (gemini fallback): model=%s", get_settings().gemini_model)
-    return resp.text or ""
+    return load_json_content(resp.choices[0].message.content)
+
+
+def _call_groq_text(system: str, user: str, temperature: float) -> str:
+    resp = get_groq_client().chat.completions.create(
+        model=get_settings().groq_model,
+        messages=_messages(system, user),
+        temperature=temperature,
+        max_tokens=800,
+    )
+    return final_content(resp.choices[0].message.content)
+
+
+def _call_groq_json(system: str, user: str, temperature: float) -> dict:
+    resp = get_groq_client().chat.completions.create(
+        model=get_settings().groq_model,
+        messages=_messages(system, user),
+        temperature=temperature,
+        max_tokens=800,
+        response_format={"type": "json_object"},
+    )
+    return load_json_content(resp.choices[0].message.content)
+
+
+def _generate(system: str, user: str, temperature: float, primary_call, fallback_call):
+    try:
+        return primary_call(system, user, temperature)
+    except Exception as primary_exc:
+        if not _is_transient_xai_error(primary_exc):
+            raise LLMUnavailable(f"xAI request failed ({_error_label(primary_exc)})") from primary_exc
+        log.warning(
+            "LLM fallback: primary=xAI error=%s fallback=Groq model=%s",
+            _error_label(primary_exc),
+            get_settings().groq_model,
+        )
+        try:
+            return fallback_call(system, user, temperature)
+        except Exception as fallback_exc:
+            raise LLMUnavailable(
+                f"xAI request failed ({_error_label(primary_exc)}); "
+                f"Groq fallback failed ({_error_label(fallback_exc)})"
+            ) from fallback_exc
+
+
+def generate_text(system: str, user: str, temperature: float = 0.1) -> str:
+    """Generate final answer text through xAI, then transient-only Groq fallback."""
+    return _generate(system, user, temperature, _call_xai_text, _call_groq_text)
+
+
+def generate_json(system: str, user: str, temperature: float = 0.0) -> dict:
+    """Generate a JSON object through xAI, then transient-only Groq fallback."""
+    return _generate(system, user, temperature, _call_xai_json, _call_groq_json)
 
 
 def generate(system: str, user: str, temperature: float = 0.1) -> str:
-    """Primary → Groq. On rate-limit/quota (or any Groq failure) fall back to
-    Gemini when configured. If both fail, raise LLMUnavailable."""
-    try:
-        return _call_groq(system, user, temperature)
-    except Exception as groq_exc:
-        rate_limited = _is_rate_limit(groq_exc)
-        gemini = get_gemini_client()
-        if gemini is not None:
-            reason = "rate limit" if rate_limited else "error"
-            log.warning("Groq %s (%s) — falling back to Gemini",
-                        reason, groq_exc.__class__.__name__)
-            try:
-                return _call_gemini(system, user, temperature)
-            except Exception as gem_exc:
-                raise LLMUnavailable(
-                    f"Groq failed ({groq_exc}); Gemini fallback also failed "
-                    f"({gem_exc})") from gem_exc
-        raise LLMUnavailable(str(groq_exc)) from groq_exc
+    """Compatibility wrapper for existing answer-path callers."""
+    return generate_text(system, user, temperature)

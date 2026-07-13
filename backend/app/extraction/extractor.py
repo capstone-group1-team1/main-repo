@@ -1,7 +1,7 @@
 """
 extractor.py — LLM-powered graph enrichment (Layer 2).
 
-For each manual chunk, one Groq call extracts troubleshooting knowledge as
+For each manual chunk, one shared LLM gateway call extracts troubleshooting knowledge as
 STRUCTURED JSON (never Cypher): symptoms, procedures, error codes, and
 relations between them from a CLOSED vocabulary.  Candidates are then
 normalized, validated, and written to Neo4j through FIXED, parameterized
@@ -20,12 +20,11 @@ the vector side of ingestion is never affected.
 
 from __future__ import annotations
 
-import json
-
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from app.core.config import get_groq_client, get_neo4j_driver, get_settings
+from app.core.config import get_neo4j_driver, get_settings
 from app.core.logging import get_logger
+from app.synthesis.groq_client import generate_json
 
 log = get_logger(__name__)
 
@@ -61,21 +60,14 @@ Chunk:
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 def _call_llm(chunk_text: str, device_name: str) -> dict:
-    resp = get_groq_client().chat.completions.create(
-        model=get_settings().groq_model,
-        messages=[
-            {
-                "role": "user",
-                "content": _PROMPT.format(
-                    device_name=device_name,
-                    chunk=chunk_text[: get_settings().extraction_char_limit],
-                ),
-            }
-        ],
+    return generate_json(
+        system="",
+        user=_PROMPT.format(
+            device_name=device_name,
+            chunk=chunk_text[: get_settings().extraction_char_limit],
+        ),
         temperature=0.0,
-        response_format={"type": "json_object"},
     )
-    return json.loads(resp.choices[0].message.content)
 
 
 def _validate(raw: dict, chunk_text: str, device_name: str) -> list[dict]:

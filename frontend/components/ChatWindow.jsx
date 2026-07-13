@@ -14,7 +14,7 @@ function renderAnswer(text = "", unsourced = [], onMarkerClick) {
 function safeError(error) {
   const message = error?.reason || error?.message || "The request could not be completed.";
   const providerProblem = /LLM|xAI|provider|API key|authentication|unauthorized/i.test(message);
-  if (providerProblem) return { type: "provider", message: "AI provider is not configured correctly. Verify XAI_API_KEY and restart the API service." };
+  if (providerProblem) return { type: "provider", message: "AI provider is not configured correctly. Verify XAI_API_KEY and GROQ_API_KEY, then restart the API service." };
   if (error?.status === 0 || /offline|reach the backend/i.test(message)) return { type: "offline", message: "The backend is offline. Start the API service, then try again." };
   return { type: "request", message };
 }

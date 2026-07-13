@@ -2,6 +2,7 @@
 fastapi==0.115.8
 uvicorn[standard]==0.34.0
 starlette==0.45.3          # used directly by the metrics/request-id middlewares
+slowapi==0.1.9
 
 # --- Config & models ---
 pydantic==2.10.6
@@ -12,7 +13,7 @@ python-dotenv==1.0.1
 weaviate-client==4.10.4
 neo4j==5.27.0
 groq==0.18.0
-google-genai==2.8.0
+openai==1.109.1
 
 # --- Embeddings (local bge-large-en-v1.5) ---
 

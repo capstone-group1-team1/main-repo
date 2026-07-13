@@ -8,7 +8,6 @@ no confidence math live here — those are the owned modules it composes):
     -> citation assembly -> three-signal confidence -> ChatResponse
 """
 
-from __future__ import annotations
 
 import re
 
