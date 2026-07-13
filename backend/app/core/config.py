@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # --- Groq (primary LLM) ---
     groq_api_key: str
-    groq_model: str = "openai/gpt-oss-120b"
+    groq_model: str = "qwen/qwen3-32b"
 
     # --- Gemini (fallback LLM, used only when Groq is rate-limited/unavailable) ---
     # Optional: if gemini_api_key is empty, the fallback is simply disabled and

@@ -2,7 +2,7 @@
 groq_client.py — the single thin LLM gateway.
 
 Every generation call in the answer path goes through generate(). Primary
-provider is Groq (openai/gpt-oss-120b). If Groq is rate-limited or otherwise
+provider is Groq (qwen/qwen3-32b). If Groq is rate-limited or otherwise
 unavailable, and a Gemini key is configured, we transparently fall back to
 Gemini (gemini-2.5-flash via the new google-genai SDK). Swapping or extending
 providers later means changing THIS file only.
