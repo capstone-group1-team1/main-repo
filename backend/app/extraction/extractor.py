@@ -20,12 +20,11 @@ the vector side of ingestion is never affected.
 
 from __future__ import annotations
 
-import json
-
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_groq_client, get_neo4j_driver, get_settings
 from app.core.logging import get_logger
+from app.synthesis.output_guard import load_json_content
 
 log = get_logger(__name__)
 
@@ -74,8 +73,9 @@ def _call_llm(chunk_text: str, device_name: str) -> dict:
         ],
         temperature=0.0,
         response_format={"type": "json_object"},
+        reasoning_format="hidden",
     )
-    return json.loads(resp.choices[0].message.content)
+    return load_json_content(resp.choices[0].message.content)
 
 
 def _validate(raw: dict, chunk_text: str, device_name: str) -> list[dict]:

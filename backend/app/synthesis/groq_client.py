@@ -14,6 +14,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_gemini_client, get_groq_client, get_settings
 from app.core.logging import get_logger
+from app.synthesis.output_guard import final_content
 
 log = get_logger(__name__)
 
@@ -45,11 +46,12 @@ def _call_groq(system: str, user: str, temperature: float) -> str:
                   {"role": "user", "content": user}],
         temperature=temperature,
         max_tokens=800,
+        reasoning_format="hidden",
     )
     usage = resp.usage
     log.info("LLM call (groq): prompt=%s completion=%s tokens",
              usage.prompt_tokens, usage.completion_tokens)
-    return resp.choices[0].message.content or ""
+    return final_content(resp.choices[0].message.content)
 
 
 def _call_gemini(system: str, user: str, temperature: float) -> str:
@@ -70,7 +72,7 @@ def _call_gemini(system: str, user: str, temperature: float) -> str:
         ),
     )
     log.info("LLM call (gemini fallback): model=%s", get_settings().gemini_model)
-    return resp.text or ""
+    return final_content(resp.text)
 
 
 def generate(system: str, user: str, temperature: float = 0.1) -> str:
