@@ -1,7 +1,7 @@
 """
 config.py — THE single configuration module.
 
-Every connection detail (Neo4j, Weaviate, Groq, embedding model) is read here,
+Every connection detail (Neo4j, Weaviate, xAI, Groq, embedding model) is read here,
 from environment variables (populated by the local .env file in Stage 1).
 No other module in the project may read os.environ or build a connection
 string.  This is what makes the future Stage 2 migration a pure
@@ -32,18 +32,17 @@ load_dotenv(_PROJECT_ROOT / ".env")
 
 
 class Settings(BaseSettings):
-    """Typed application settings.  Fails fast at startup if GROQ_API_KEY
-    is missing; everything else has working local-stack defaults."""
+    """Typed application settings. Fails fast when xAI or Groq credentials
+    are missing; everything else has working local-stack defaults."""
 
-    # --- Groq (primary LLM) ---
+    # --- xAI / Grok 4.5 (primary LLM) ---
+    xai_api_key: str
+    xai_base_url: str = "https://api.x.ai/v1"
+    xai_model: str = "grok-4.5"
+
+    # --- Groq / Llama 4 Scout (fallback LLM) ---
     groq_api_key: str
-    groq_model: str = "qwen/qwen3-32b"
-
-    # --- Gemini (fallback LLM, used only when Groq is rate-limited/unavailable) ---
-    # Optional: if gemini_api_key is empty, the fallback is simply disabled and
-    # a Groq failure surfaces as before.
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     # --- Neo4j ---
     neo4j_uri: str = "bolt://localhost:7687"
@@ -116,7 +115,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()  # raises a clear ValidationError if GROQ_API_KEY missing
+    return Settings()  # raises a clear ValidationError if required LLM keys are missing
 
 
 # ---------------------------------------------------------------------------
@@ -151,24 +150,20 @@ def get_weaviate_client():
 
 
 @lru_cache
-def get_groq_client():
-    from groq import Groq
+def get_xai_client():
+    """OpenAI-compatible xAI client for the primary Grok 4.5 provider."""
+    from openai import OpenAI
 
-    return Groq(api_key=get_settings().groq_api_key)
+    s = get_settings()
+    return OpenAI(api_key=s.xai_api_key, base_url=s.xai_base_url)
 
 
 @lru_cache
-def get_gemini_client():
-    """Fallback LLM client (new unified google-genai SDK).  Returns None if no
-    key is configured, which disables the fallback cleanly.  The old
-    `google-generativeai` package is deprecated (EOL Nov 2025) — this uses the
-    current `google-genai` package: `from google import genai`."""
-    key = get_settings().gemini_api_key
-    if not key:
-        return None
-    from google import genai
+def get_groq_client():
+    """Groq client for the Llama 4 Scout fallback provider."""
+    from groq import Groq
 
-    return genai.Client(api_key=key)
+    return Groq(api_key=get_settings().groq_api_key)
 
 
 @lru_cache

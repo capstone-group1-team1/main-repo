@@ -1,5 +1,5 @@
 """
-llm_fallback.py — one cheap Groq classification call, used ONLY when the
+llm_fallback.py — one shared LLM gateway classification call, used ONLY when the
 rule engine is not confident.  Ambiguous phrasings ("AirMedia acting weird
 again?") defeat cue lists; a single JSON-mode call resolves them without
 paying LLM latency/cost on every query.
@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from app.core.config import get_groq_client, get_settings
-from app.synthesis.output_guard import load_json_content
+from app.synthesis.groq_client import generate_json
 from app.synthesis.sanitize import scrub
 
 _PROMPT = """Classify this smart-office question into exactly one route.
@@ -37,14 +36,11 @@ class FallbackUnavailable(Exception):
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=5),
        reraise=True)
 def _call(question: str) -> dict:
-    resp = get_groq_client().chat.completions.create(
-        model=get_settings().groq_model,
-        messages=[{"role": "user", "content": _PROMPT.format(question=scrub(question))}],
+    return generate_json(
+        system="",
+        user=_PROMPT.format(question=scrub(question)),
         temperature=0.0,
-        response_format={"type": "json_object"},
-        reasoning_format="hidden",
     )
-    return load_json_content(resp.choices[0].message.content)
 
 
 def classify(question: str) -> tuple[str, float]:
