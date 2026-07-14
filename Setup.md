@@ -1,24 +1,20 @@
-# FacilityGraph AI — Setup Guide
+# GridSense Office — Setup Guide
 
-Use this guide to run the complete FacilityGraph AI stack locally, including
+Use this guide to run the complete GridSense Office stack locally, including
 the FastAPI backend, Next.js frontend, Neo4j knowledge graph, and Weaviate
 vector database.
 
 For day-to-day operation after setup, see [`Runbook.md`](./Runbook.md). For
 the internal system design, see [`Architecture.md`](./Architecture.md).
 
-> **Frontend configuration:** The current frontend is built with Next.js,
-> runs on port `3000`, and uses `NEXT_PUBLIC_API_BASE_URL` to configure the
-> backend URL.
-
 ---
 
-## 1. What You're Running
+## 1. System Overview
 
 ```text
    Browser (Next.js UI, :3000)
         │
-        │ HTTP + X-Mock-User-Id header
+        │ HTTP + X-Mock-User-Id
         ▼
    FastAPI backend (:8000)
         │
@@ -41,22 +37,24 @@ the internal system design, see [`Architecture.md`](./Architecture.md).
                Vector database
 ```
 
-xAI is the primary LLM provider. Groq is used only when xAI encounters a
-qualifying transient provider failure:
+xAI is the primary LLM provider. Groq is configured as the fallback provider
+and is invoked only when xAI encounters a qualifying transient failure:
 
 - HTTP `429`
 - Request timeout
 - Connection failure
 - HTTP `5xx`
 
-Authentication and configuration errors do not trigger the Groq fallback.
+Authentication and configuration errors do not trigger fallback.
 
-Neo4j and Weaviate run in Docker. The backend and frontend can run directly
-on the host or as part of the complete Docker Compose stack.
+Neo4j and Weaviate run in Docker. The backend and frontend can run either
+inside Docker or directly on the host.
+
+---
 
 ## 2. Prerequisites
 
-| Software | Version | Check command |
+| Software | Recommended version | Check command |
 |---|---:|---|
 | Docker | 24+ with Compose v2 | `docker --version` and `docker compose version` |
 | Python | 3.11 or 3.12 | `python3 --version` |
@@ -65,10 +63,12 @@ on the host or as part of the complete Docker Compose stack.
 
 You also need:
 
-- An **xAI API key** for the primary LLM provider.
-- A **Groq API key** for transient-failure fallback.
-- Approximately 4 GB of available RAM for Neo4j, Weaviate, and the embedding model.
-- Approximately 1.3 GB of available disk space for `bge-large-en-v1.5`.
+- An **xAI API key**
+- A **Groq API key**
+- Approximately 4 GB of available RAM
+- Approximately 1.3 GB of available disk space for `bge-large-en-v1.5`
+
+---
 
 ## 3. Clone the Repository
 
@@ -76,6 +76,8 @@ You also need:
 git clone https://github.com/capstone-group1-team1/main-repo.git
 cd main-repo
 ```
+
+---
 
 ## 4. Configure Environment Variables
 
@@ -85,7 +87,7 @@ Copy the root environment template:
 cp .env.example .env
 ```
 
-Set the following variables in the local `.env` file:
+Set the required LLM provider variables:
 
 ```env
 XAI_API_KEY=your_xai_api_key
@@ -96,55 +98,32 @@ GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 ```
 
-Additional supported variables may include:
+Common optional settings may include:
+
+```env
+ENABLE_GRAPH_ENRICHMENT=true
+RERANK_ENABLED=false
+LOG_LEVEL=INFO
+CORS_ORIGINS=http://localhost:3000
+```
 
 | Variable | Required | Purpose |
 |---|---:|---|
 | `XAI_API_KEY` | **Yes** | Authenticates requests to the primary xAI provider |
 | `XAI_BASE_URL` | **Yes** | Configures the xAI-compatible API endpoint |
-| `XAI_MODEL` | **Yes** | Primary model; currently `grok-4.5` |
-| `GROQ_API_KEY` | **Yes** | Authenticates the Groq fallback provider |
-| `GROQ_MODEL` | **Yes** | Fallback model; currently `meta-llama/llama-4-scout-17b-16e-instruct` |
-| `ENABLE_GRAPH_ENRICHMENT` | No | Set to `false` to skip per-chunk LLM enrichment during iteration |
-| `LOG_LEVEL` | No | Use `DEBUG` for detailed ingestion and rejection logs |
-| `CORS_ORIGINS` | No | Comma-separated list of permitted frontend origins |
+| `XAI_MODEL` | **Yes** | Primary model, currently `grok-4.5` |
+| `GROQ_API_KEY` | **Yes** | Authenticates requests to the Groq fallback provider |
+| `GROQ_MODEL` | **Yes** | Fallback model, currently `meta-llama/llama-4-scout-17b-16e-instruct` |
+| `ENABLE_GRAPH_ENRICHMENT` | No | Enables or disables LLM-assisted graph enrichment |
+| `RERANK_ENABLED` | No | Enables or disables cross-encoder reranking |
+| `LOG_LEVEL` | No | Controls application logging detail |
+| `CORS_ORIGINS` | No | Comma-separated list of allowed frontend origins |
 
 Never commit `.env`, API keys, or other secrets to the repository.
 
-## 5. Start the Infrastructure Services
+---
 
-To start the services defined in Docker Compose:
-
-```bash
-docker compose up -d
-docker compose ps
-```
-
-Wait until Neo4j and Weaviate report a healthy status.
-
-Sanity-check Weaviate:
-
-```bash
-curl http://localhost:8080/v1/.well-known/ready
-```
-
-Open the Neo4j browser at:
-
-```text
-http://localhost:7474
-```
-
-The local development credentials may use:
-
-```text
-Username: neo4j
-Password: smartoffice123
-```
-
-> **Security:** `smartoffice123` is a local development default. Change it
-> before using a shared, staging, or production environment.
-
-## 6. Add the Device Manuals
+## 5. Add the Device Manuals
 
 Place the 10 manual PDFs in:
 
@@ -153,11 +132,13 @@ data/manuals_pdf/
 ```
 
 The files must be text-based PDFs rather than image-only scans. The ingestion
-pipeline extracts the text layer with `pypdf`. Image-only files are rejected
+pipeline extracts the text layer with `pypdf`. A pure image scan is rejected
 when no extractable text is found.
 
-Each filename should contain the matching device name from
-`data/asset_inventory.csv`. Spaces, underscores, and hyphens are supported.
+Each filename should contain the corresponding device name, model, or alias
+from `data/asset_inventory.csv`. Matching uses normalized containment and
+prefers the longest valid match. Ambiguous filenames are skipped rather than
+guessed.
 
 Recommended filenames:
 
@@ -174,125 +155,151 @@ Recommended filenames:
 | Cisco Ceiling Microphone Pro | `cisco_ceiling_mic_pro.pdf` |
 | Samsung QMC75 Display | `samsung_qmc75_display.pdf` |
 
-A missing PDF is skipped with a warning, and the remaining files can still be
-ingested.
+A missing manual is skipped with a warning, and the remaining files can still
+be ingested.
 
 To add a new device later:
 
 1. Add the device to `data/asset_inventory.csv`.
-2. Add a matching PDF to `data/manuals_pdf/`.
-3. Run the seeding process again.
+2. Add a matching manual to `data/manuals_pdf/`.
+3. Run the graph loader.
+4. Run the ingestion pipeline.
 
-The ingestion manifest ensures that only new or changed content is processed.
+Both operations are idempotent and process only new or changed content.
 
-## 7. Install the Backend for Manual Development
+---
 
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-```
+## 6. Recommended Setup: Full Docker Compose
 
-On Windows:
-
-```powershell
-.venv\Scripts\activate
-```
-
-Install the dependencies:
-
-```bash
-pip install --upgrade pip
-pip install -r ../requirements.txt
-```
-
-The first installation may take several minutes because it installs packages
-such as `torch` and `sentence-transformers`.
-
-Run backend commands from the `backend/` directory with the virtual
-environment active.
-
-## 8. Seed the System
-
-From the project root:
-
-```bash
-bash scripts/seed_all.sh
-```
-
-The script performs two main operations:
-
-1. Builds the Neo4j knowledge graph from rooms, devices, relationships, and
-   incident CSV files.
-2. Processes manuals and incidents, creates embeddings, and writes vector
-   records to Weaviate.
-
-When graph enrichment is enabled, the first ingestion may make one LLM call
-per manual chunk. xAI is used as the primary provider, and Groq is used only
-for qualifying transient xAI failures.
-
-Example ingestion summary:
-
-```text
-=== Ingestion report ===
-Manuals:   {'new': 10}
-Incidents: {'new': 16}
-Weaviate total chunks: ~180
-```
-
-On later runs, unchanged manuals may appear as skipped because ingestion uses
-content hashes.
-
-## 9. Alternative: Run the Full Stack with Docker Compose
-
-Build and start Neo4j, Weaviate, the API, and the web application:
+Build and start the full stack:
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-Seed from inside the API container:
+This starts:
+
+- Neo4j
+- Weaviate
+- FastAPI backend
+- Next.js frontend
+
+Wait until the required services report a healthy status.
+
+Use `--no-cache` only when diagnosing a stale Docker image or dependency
+problem:
+
+```bash
+docker compose build --no-cache api web
+docker compose up -d
+```
+
+Do not use `--no-cache` for every normal build because it disables Docker's
+build cache and increases build time.
+
+---
+
+## 7. Seed the System
+
+The graph must be loaded before manual ingestion because manuals are linked to
+existing device nodes.
+
+Run these commands in order:
 
 ```bash
 docker compose exec api python -m app.graph.graph_loader
 docker compose exec api python -m app.ingestion.pipeline
 ```
 
-Open:
+The graph loader creates:
 
-- Application: `http://localhost:3000`
-- FastAPI documentation: `http://localhost:8000/docs`
-- Neo4j browser: `http://localhost:7474`
+- Rooms
+- Devices
+- Relationships
+- Incidents
 
-The `data/manuals_pdf/` directory is mounted into the API container. Add the
-manuals before running ingestion.
+The ingestion pipeline:
 
-## 10. Run the Backend Manually
+- Reads manuals
+- Extracts text
+- Creates semantic chunks
+- Generates embeddings
+- Writes chunks to Weaviate
+- Links manuals to devices
+- Optionally enriches Neo4j with validated troubleshooting concepts
 
-From the `backend/` directory with the virtual environment active:
+When graph enrichment is enabled, the first ingestion may make one LLM call
+per manual chunk. xAI is used first, while Groq is reserved for qualifying
+transient xAI failures.
 
-```bash
-uvicorn app.main:app --reload --port 8000
+Repeated runs are safe. Unchanged content is skipped by content hash.
+
+---
+
+## 8. Open and Verify the Application
+
+Open the frontend:
+
+```text
+http://localhost:3000
 ```
 
-Verify the health endpoint:
+Open the FastAPI documentation:
+
+```text
+http://localhost:8000/docs
+```
+
+Check API liveness:
 
 ```bash
 curl http://localhost:8000/healthz
 ```
 
-Example healthy response:
+Expected response:
 
 ```json
 {
-  "api": "ok",
-  "neo4j": "ok",
-  "weaviate": "ok (183 chunks)"
+  "status": "ok"
 }
 ```
 
-Test the chat endpoint with a technician user:
+Check dependency readiness:
+
+```bash
+curl -i http://localhost:8000/readyz
+```
+
+A healthy system should report ready. If Neo4j or Weaviate is unavailable,
+the endpoint may return HTTP `503` with dependency details.
+
+Check Weaviate directly:
+
+```bash
+curl -i http://localhost:8080/v1/.well-known/ready
+```
+
+Open Neo4j Browser:
+
+```text
+http://localhost:7474
+```
+
+Local development credentials may use:
+
+```text
+Username: neo4j
+Password: smartoffice123
+```
+
+Change default credentials before any shared or deployed environment.
+
+---
+
+## 9. Test the Chat Endpoints
+
+### Complete response
 
 ```bash
 curl -s http://localhost:8000/chat \
@@ -302,67 +309,104 @@ curl -s http://localhost:8000/chat \
   | python3 -m json.tool
 ```
 
-API documentation:
+### Streaming response
 
-```text
-http://localhost:8000/docs
+```bash
+curl -N -X POST http://localhost:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "X-Mock-User-Id: u-ali" \
+  -d '{"question":"The Samsung display has no signal. What should I check?"}'
 ```
 
-## 11. Run the Frontend Manually
+Both endpoints use the same routing, retrieval, provider fallback, citation,
+and confidence pipeline.
+
+---
+
+## 10. Run the Backend Outside Docker
+
+Create a local virtual environment from the repository root:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+On Windows:
+
+```powershell
+.venv\Scripts\activate
+```
+
+Install dependencies:
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Run the backend:
+
+```bash
+uvicorn app.main:app --reload --port 8000 --app-dir backend
+```
+
+Docker must still be running Neo4j and Weaviate.
+
+---
+
+## 11. Run the Frontend Outside Docker
 
 ```bash
 cd frontend
-cp .env.example .env
-```
-
-Set the backend URL:
-
-```env
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-```
-
-Install and run the frontend:
-
-```bash
 npm install
 npm run dev
 ```
 
-Open:
+The frontend runs at:
 
 ```text
 http://localhost:3000
 ```
 
-The interface includes:
+`NEXT_PUBLIC_API_BASE_URL` is a build-time setting. Its default value should
+point to:
 
-- A user-role picker
-- An Ask tab with cited answers and confidence badges
-- A Devices tab
-- An Incidents tab
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
+
+After changing this value, rebuild or restart the frontend as required.
+
+---
 
 ## 12. Run the Tests
 
-Run the complete backend test suite:
+From the repository root:
 
 ```bash
-cd backend
-pytest tests -q
+PYTHONPATH=backend pytest -q backend/tests
 ```
 
-The test suite covers areas such as:
+The test configuration supplies dummy provider credentials where required, so
+unit tests should not need live database or external provider calls.
+
+The suite covers areas such as:
 
 - Router rules
+- Entity matching
+- LLM provider fallback
 - Confidence calculations
 - Citation assembly
-- Document chunking
+- Output protection
 - Permission handling
-- Output safety
-- LLM provider fallback behavior
+- Ingestion behavior
 
-## 13. Run the Validation Checks
+---
 
-From the repository root, run:
+## 13. Run Validation Checks
+
+Before opening or merging a pull request:
 
 ```bash
 python -m compileall -q backend/app backend/tests
@@ -371,85 +415,92 @@ docker compose config --quiet
 docker compose build api web
 ```
 
-These commands validate:
+These checks validate:
 
 - Python syntax
 - Output guard behavior
 - xAI-to-Groq fallback behavior
 - Docker Compose configuration
-- API and frontend Docker image builds
+- API image build
+- Frontend image build
 
-## 14. Run the Smoke Test
+---
 
-With the backend running and the system seeded:
+## 14. Run the Evaluation
 
-```bash
-python scripts/smoke_test.py
-```
-
-The smoke test checks the health endpoint and submits one question for each
-retrieval route while validating the response structure.
-
-## 15. Run the Evaluation
-
-With the backend running and the data stores seeded:
+With the backend running and seeded:
 
 ```bash
 cd eval
-python run_eval.py --subset smoke
-python run_eval.py
-python run_eval.py --baseline
+python -u run_eval.py --subset smoke --skip-health
+python -u run_eval.py
 ```
 
-The evaluation commands run:
+Useful optional flags may include:
 
-- A six-item smoke subset
-- The complete 50-item evaluation across three seeds
-- A plain-RAG baseline comparison
+```text
+--seeds N
+--skip-ablation
+--skip-ladder
+--base-url URL
+```
 
-Generated JSON and Markdown reports are stored in:
+Generated reports are written to:
 
 ```text
 eval/reports/
 ```
 
-The reports include:
+Failure analysis is written to:
 
-- Answer correctness
+```text
+eval/failure_cases.md
+```
+
+Evaluation outputs may include:
+
+- Grounded rate
+- Correctness rate
 - Routing accuracy
-- Citation validity
 - Confidence calibration
+- Retrieval Recall@5
+- Mean Reciprocal Rank
 - p95 latency
-- Error breakdowns by route and device
-- Documented failure cases and next-iteration hypotheses
+- Error analysis by route and device
+- Baseline and ablation comparisons
 
-## 16. Troubleshooting
+---
 
-| Symptom | Cause or fix |
-|---|---|
-| Missing `XAI_API_KEY` or xAI configuration validation error | Set `XAI_API_KEY`, `XAI_BASE_URL`, and `XAI_MODEL` in the root `.env` file |
-| Missing `GROQ_API_KEY` or `GROQ_MODEL` | Add the Groq fallback credentials and model to `.env` |
-| xAI returns HTTP `429`, timeout, connection failure, or HTTP `5xx` | The application should use the configured Groq fallback |
-| xAI authentication or configuration error | Correct the xAI settings; these errors intentionally do not trigger fallback |
-| `/healthz` reports a Neo4j error | Check `docker compose ps` and `docker compose logs neo4j` |
-| `/healthz` reports a Weaviate error | Confirm that ports `8080` and `50051` are available and that Weaviate is healthy |
-| Seeding reports a missing manual | Add the corresponding PDF to `data/manuals_pdf/` |
-| Seeding reports no extractable text | Replace the image-only scan with a text-based PDF |
-| The first request is very slow | The local embedding model may still be downloading or loading |
-| Frontend cannot reach the backend | Confirm that the backend is running on port `8000` and `NEXT_PUBLIC_API_BASE_URL` is correct |
-| Browser reports a CORS error | Add the frontend origin to `CORS_ORIGINS`, then restart the backend |
-| Graph enrichment is slow or consumes too many tokens | Set `ENABLE_GRAPH_ENRICHMENT=false` during development |
-| A required port is already in use | Stop the conflicting service or update the relevant mapping in `docker-compose.yml` |
+## 15. Troubleshooting
 
-## 17. Stop or Reset the Environment
+| Symptom | Likely cause | Corrective action |
+|---|---|---|
+| Missing `XAI_API_KEY` or `GROQ_API_KEY` | Root `.env` is missing or incomplete | Add all required provider variables and restart the API |
+| Missing `XAI_BASE_URL`, `XAI_MODEL`, or `GROQ_MODEL` | Provider configuration is incomplete | Add the missing values to `.env` |
+| `ModuleNotFoundError: openai` inside the API container | Docker image is stale | Run `docker compose build --no-cache api`, then restart |
+| `/healthz` succeeds but `/readyz` returns `503` | API is alive, but Neo4j or Weaviate is unavailable | Check `docker compose ps` and dependency logs |
+| Weaviate is unreachable | REST or gRPC port is blocked | Verify ports `8080` and `50051` |
+| Neo4j is unreachable | Container is unhealthy or credentials are incorrect | Inspect `docker compose logs neo4j` |
+| Manual is unmatched | Filename does not map to a known device, model, or alias | Rename the file using the catalog naming rules |
+| `no extractable text found` | PDF is an image-only scan | Replace it with a text-based or OCR-processed PDF |
+| First request is slow | The embedding model is downloading or loading | Allow initialization to complete |
+| Frontend cannot reach backend | Backend is unavailable or the build-time API URL is incorrect | Verify port `8000` and `NEXT_PUBLIC_API_BASE_URL` |
+| Browser reports a CORS error | Frontend origin is not allowed | Update `CORS_ORIGINS` and restart the API |
+| Enrichment is slow or consumes excessive tokens | Per-chunk enrichment is enabled | Set `ENABLE_GRAPH_ENRICHMENT=false` during development |
+| Port already in use | Another process uses a required port | Stop the conflicting process or update Docker mappings |
+| Docker rebuild downloads everything | Build cache was removed or disk pressure evicted layers | Check `docker system df` and clean unused images carefully |
 
-Stop the services while keeping persistent data:
+---
+
+## 16. Stop and Reset the Environment
+
+Stop the stack while keeping persistent data:
 
 ```bash
 docker compose down
 ```
 
-Stop the services and remove graph and vector volumes:
+Stop the stack and remove Neo4j and Weaviate volumes:
 
 ```bash
 docker compose down -v
@@ -464,6 +515,12 @@ rm -f data/ingest_manifest.sqlite
 After a full reset:
 
 ```bash
-docker compose up -d
-bash scripts/seed_all.sh
+docker compose up -d --build
+docker compose exec api python -m app.graph.graph_loader
+docker compose exec api python -m app.ingestion.pipeline
+docker compose ps
 ```
+
+> **Warning:** `docker compose down -v` and deleting the ingestion manifest
+> are destructive local-development operations. Use them only when a full
+> rebuild is intended.

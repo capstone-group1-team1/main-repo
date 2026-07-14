@@ -1,29 +1,31 @@
-# main-repo
+# GridSense Office
 
-**AI Capstone Project for Group 1 Team 1**
-
-FacilityGraph AI is a hybrid RAG + Knowledge Graph assistant for smart office maintenance.
+**A hybrid RAG + Knowledge Graph assistant for smart office maintenance.**
 
 AI.SPIRE capstone project — LevelUp Economy × Istidama Consulting × Future Skills Fund.
 
-FacilityGraph AI answers maintenance and facility questions such as:
+GridSense Office answers maintenance and facility questions such as:
 
 - *Why does the display in the meeting room show no signal?*
 - *What is connected to the reception access point?*
 - *What was installed in this room last year?*
 
-The system combines semantic search over device manuals and incident records with a structured knowledge graph of office devices, rooms, relationships, and maintenance history.
+The system combines semantic search over device manuals and incident records
+with a structured knowledge graph of office devices, rooms, relationships,
+and maintenance history.
 
-Every generated answer includes citations and a confidence score. When supporting evidence is missing, the confidence score is capped at a low level to make uncertainty visible to the user.
+Every generated answer includes citations and a user-facing confidence score.
+When supporting evidence is weak or missing, the confidence score is reduced
+and citation-free answers are prevented from appearing highly reliable.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
-| [`Executive_Briefing.md`](./Executive_Briefing.md) | Non-technical overview of the system, its value, trust mechanisms, and current scope |
-| [`Architecture.md`](./Architecture.md) | System architecture, routing logic, retrieval, synthesis, citations, confidence scoring, and module map |
-| [`Setup.md`](./Setup.md) | Complete local installation and setup instructions |
-| [`Runbook.md`](./Runbook.md) | Health checks, common operational tasks, troubleshooting, and recovery procedures |
+| [`Executive_Briefing.md`](./Executive_Briefing.md) | Non-technical overview of the problem, solution, value, scope, and roadmap |
+| [`Architecture.md`](./Architecture.md) | System architecture, routing, retrieval, synthesis, citations, confidence, and deployment design |
+| [`Setup.md`](./Setup.md) | Complete local installation, configuration, seeding, and validation instructions |
+| [`Runbook.md`](./Runbook.md) | Daily operations, health checks, troubleshooting, recovery, and demo readiness |
 
 ## Quick Start
 
@@ -40,7 +42,7 @@ cd main-repo
 cp .env.example .env
 ```
 
-Set the following variables in the local `.env` file:
+Set the required LLM provider variables in `.env`:
 
 ```env
 XAI_API_KEY=your_xai_api_key
@@ -51,61 +53,35 @@ GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 ```
 
-Never commit `.env` or any API keys to the repository.
+Never commit `.env` or API keys.
 
 ### 3. Build and start the full stack
 
 ```bash
 docker compose up -d --build
-```
-
-The Docker Compose stack starts the project services, including Neo4j, Weaviate, the FastAPI backend, and the frontend.
-
-### 4. Seed the data stores
-
-```bash
-bash scripts/seed_all.sh
-```
-
-This command loads the knowledge graph data and ingests the available manuals and incident records.
-
-For complete setup instructions, required filenames, environment variables, and troubleshooting guidance, see [`Setup.md`](./Setup.md).
-
-## LLM Providers
-
-FacilityGraph AI uses xAI with `grok-4.5` as its primary LLM provider.
-
-Groq with `meta-llama/llama-4-scout-17b-16e-instruct` is used only when xAI has a transient provider failure, including:
-
-- HTTP `429`
-- Request timeout
-- Connection failure
-- HTTP `5xx`
-
-Configuration and authentication errors do not trigger the Groq fallback.
-
-The required provider settings are:
-
-- `XAI_API_KEY`
-- `XAI_BASE_URL`
-- `XAI_MODEL`
-- `GROQ_API_KEY`
-- `GROQ_MODEL`
-
-Store these values only in a local `.env` file. Never commit `.env` or API keys.
-
-## Verification
-
-Check that all containers are running:
-
-```bash
 docker compose ps
 ```
 
-Check the backend health endpoint:
+This starts Neo4j, Weaviate, the FastAPI backend, and the Next.js frontend.
+
+### 4. Seed the knowledge stores
+
+Load the graph first:
 
 ```bash
-curl http://localhost:8000/health
+docker compose exec api python -m app.graph.graph_loader
+```
+
+Then ingest manuals and incidents:
+
+```bash
+docker compose exec api python -m app.ingestion.pipeline
+```
+
+Open the application:
+
+```text
+http://localhost:3000
 ```
 
 Open the FastAPI documentation:
@@ -113,6 +89,107 @@ Open the FastAPI documentation:
 ```text
 http://localhost:8000/docs
 ```
+
+For full setup instructions, manual naming rules, environment variables, and
+troubleshooting, see [`Setup.md`](./Setup.md).
+
+## LLM Providers
+
+GridSense Office uses:
+
+- **Primary provider:** xAI with `grok-4.5`
+- **Fallback provider:** Groq with
+  `meta-llama/llama-4-scout-17b-16e-instruct`
+
+Groq is used only when xAI encounters a qualifying transient provider failure,
+including:
+
+- HTTP `429`
+- Request timeout
+- Connection failure
+- HTTP `5xx`
+
+Authentication and configuration errors do not trigger fallback.
+
+## How It Works
+
+```text
+ Question
+    │
+    ▼
+ Query Router ──► GRAPH_ONLY ──► graph retriever  ─┐
+   (rules,        RAG_ONLY   ──► vector retriever ─┼─► evidence
+    LLM fallback, HYBRID     ──► both + merger    ─┘      │
+    HYBRID default)                                       ▼
+                                             LLM synthesis (xAI)
+                                                          │
+                                          transient failure only
+                                                          ▼
+                                                Groq fallback
+                                                          │
+                                               inline [n] markers
+                                                          ▼
+                                           citation assembler
+                                                          │
+                                           confidence calculation
+                                                          │
+                                                          ▼
+                              ChatResponse (`POST /chat`)
+                              or token stream (`POST /chat/stream`)
+```
+
+Each question is classified into one of three retrieval routes:
+
+- `GRAPH_ONLY` for structured relationships, topology, room contents, device
+  history, and graph facts.
+- `RAG_ONLY` for manuals, troubleshooting procedures, and unstructured
+  incident evidence.
+- `HYBRID` when both evidence types are useful or when routing remains
+  uncertain.
+
+Evidence is retrieved from Neo4j, Weaviate, or both. Hybrid candidates are
+merged, deduplicated, and reranked before synthesis. The final output includes
+validated citations and a route-aware confidence score.
+
+See [`Architecture.md`](./Architecture.md) for the complete technical design.
+
+## API Modes
+
+GridSense Office supports:
+
+- `POST /chat` for a complete response
+- `POST /chat/stream` for token-by-token streaming
+
+Both modes use the same routing, retrieval, provider fallback, citation, and
+confidence pipeline.
+
+## Tech Stack
+
+- **Primary LLM:** xAI `grok-4.5`
+- **Fallback LLM:** Groq `meta-llama/llama-4-scout-17b-16e-instruct`
+- **Backend:** FastAPI
+- **Frontend:** Next.js
+- **Knowledge Graph:** Neo4j
+- **Vector Database:** Weaviate v4
+- **Search:** Hybrid dense vector + BM25
+- **Embeddings:** `BAAI/bge-large-en-v1.5`
+- **Reranker:** `BAAI/bge-reranker-base`
+- **Deployment:** Docker Compose
+- **Monitoring:** Prometheus/OpenMetrics
+
+## Current Scope
+
+The current capstone implementation includes:
+
+- 10 devices across 4 rooms
+- Cisco, Crestron, and Samsung equipment
+- 24 documented physical and logical relationships
+- 16 historical incident records
+- 10 vendor manuals
+- A 50-question held-out evaluation dataset
+- Coverage across `GRAPH_ONLY`, `RAG_ONLY`, and `HYBRID`
+- Deliberately out-of-scope questions to test whether the system avoids
+  unsupported guessing
 
 ## Validation
 
@@ -125,64 +202,11 @@ docker compose config --quiet
 docker compose build api web
 ```
 
-## How It Works
+With the full stack running and seeded:
 
-```text
- Question
-    │
-    ▼
- Query Router ──► GRAPH_ONLY ──► graph retriever  ─┐
-   (rules,        RAG_ONLY   ──► vector retriever ─┼─► evidence
-    LLM fallback, HYBRID     ──► both + merger    ─┘      │
-    HYBRID default)                                       ▼
-                                            LLM synthesis (xAI)
-                                                          │
-                                          transient failure only
-                                                          ▼
-                                                Groq fallback
-                                                          │
-                                                          ▼
-                                              inline citation markers
-                                                          │
-                                                          ▼
-                                           citation assembler + confidence
-                                                          │
-                                                          ▼
-                                                    ChatResponse
+```bash
+python scripts/smoke_test.py
 ```
-
-Each question is classified into one of three retrieval routes:
-
-- `GRAPH_ONLY` for structured relationships, topology, devices, rooms, and historical facts.
-- `RAG_ONLY` for information found primarily in manuals and unstructured documents.
-- `HYBRID` when both knowledge graph and vector retrieval evidence are useful, or when the router is uncertain.
-
-Evidence is retrieved from Neo4j and/or Weaviate, merged when necessary, and sent to the synthesis layer. xAI generates the response by default, while Groq is reserved for qualifying transient provider failures. The final response includes assembled citations and a user-facing confidence score.
-
-See [`Architecture.md`](./Architecture.md) for the complete technical breakdown.
-
-## Tech Stack
-
-- **Primary LLM:** xAI using `grok-4.5`
-- **Fallback LLM:** Groq using `meta-llama/llama-4-scout-17b-16e-instruct`
-- **Backend:** FastAPI
-- **Frontend:** Next.js
-- **Knowledge Graph:** Neo4j
-- **Vector Database:** Weaviate v4
-- **Embeddings:** `bge-large-en-v1.5`
-- **Reranker:** `bge-reranker-base`
-- **Deployment:** Docker Compose
-- **Monitoring:** Prometheus / OpenMetrics
-
-## Current Scope
-
-The current system includes:
-
-- 10 devices across 4 rooms
-- Devices from Cisco, Crestron, and Samsung
-- 24 documented relationships
-- 16 historical incidents
-- A 50-question held-out evaluation dataset balanced across the three routing modes
 
 ## Team
 

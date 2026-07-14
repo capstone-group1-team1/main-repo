@@ -1,4 +1,4 @@
-# FacilityGraph AI — Executive Briefing
+# GridSense Office — Executive Briefing
 
 **Project type:** AI.SPIRE Capstone Project  
 **Program partners:** LevelUp Economy × Istidama Consulting × Future Skills Fund  
@@ -8,53 +8,50 @@
 
 ## Executive Summary
 
-FacilityGraph AI is an intelligent maintenance assistant designed for smart
-office environments. It helps technicians, operators, and facility teams find
-reliable answers to questions about devices, rooms, connections, manuals, and
-historical incidents.
+GridSense Office is an AI-powered maintenance assistant for smart office
+environments. It helps technicians, operators, and facility teams answer
+questions about devices, rooms, connections, technical manuals, and historical
+incidents.
 
-Instead of relying only on document search or only on structured data, the
-system combines both:
+The system combines two complementary sources of knowledge:
 
-- **Retrieval-Augmented Generation (RAG)** for searching manuals and incident
-  records.
+- **Retrieval-Augmented Generation (RAG)** for searching technical manuals and
+  incident records.
 - **A Knowledge Graph** for understanding devices, rooms, relationships,
-  topology, and maintenance history.
+  topology, installation history, and replacement history.
 
-The result is a traceable troubleshooting assistant that retrieves relevant
-evidence, selects the appropriate reasoning path, generates a response, and
-returns citations with a user-facing confidence score.
+By combining both approaches behind an explicit query router, GridSense Office
+can provide answers that are more relevant, traceable, and operationally useful
+than a conventional document-only chatbot.
 
 ---
 
-## Business Problem
+## The Business Problem
 
 Smart offices contain interconnected networking, audiovisual, control, and
-display equipment. When a failure occurs, the required information is often
-spread across:
+display equipment. When an issue occurs, the required information is often
+distributed across:
 
 - Long technical manuals
 - Device inventories
 - Room and connection records
-- Previous incident reports
+- Historical incident reports
 - Individual staff experience
 
 This creates several operational challenges:
 
 - Troubleshooting takes longer than necessary.
-- Knowledge is difficult to transfer between team members.
-- Previous fixes are not always reused.
+- Previous solutions are difficult to find and reuse.
+- Technical knowledge may remain with individual team members.
 - Device relationships are difficult to understand from documents alone.
-- Staff may receive confident-sounding answers without knowing whether they
-  are supported by evidence.
+- Users may receive confident-sounding answers without clear evidence.
 
-FacilityGraph AI addresses these issues by bringing structured facility data,
-technical documents, and incident history into one searchable and explainable
-system.
+GridSense Office brings these information sources into one searchable and
+explainable system.
 
 ---
 
-## Proposed Solution
+## How the Solution Works
 
 A user submits a natural-language question, such as:
 
@@ -68,51 +65,53 @@ The system then:
 1. Identifies relevant devices, rooms, and entities.
 2. Classifies the question into the appropriate retrieval route.
 3. Retrieves evidence from Neo4j, Weaviate, or both.
-4. Uses the configured LLM provider to synthesize an answer.
-5. Attaches citations to supporting evidence.
-6. Calculates a confidence score based on retrieval quality, graph evidence,
-   citation coverage, and route-specific signals.
-
-This approach provides a more useful answer than plain document search while
-remaining more transparent than a conventional black-box chatbot.
+4. Uses the primary AI provider to generate an evidence-based response.
+5. Falls back to a secondary provider when a qualifying transient failure
+   occurs.
+6. Validates citations and calculates a user-facing confidence score.
+7. Returns the answer either as a complete response or as a streamed response.
 
 ---
 
 ## Core AI Capability
 
-FacilityGraph AI uses a hybrid retrieval architecture with three explicit
-routes:
+GridSense Office uses three explicit retrieval routes:
 
-| Route | Primary use |
+| Route | Primary purpose |
 |---|---|
-| `GRAPH_ONLY` | Device relationships, room topology, installation history, and structured facts |
-| `RAG_ONLY` | Technical manuals, troubleshooting instructions, and unstructured records |
-| `HYBRID` | Questions requiring both structured relationships and document evidence |
+| `GRAPH_ONLY` | Device relationships, room topology, lifecycle information, and structured facts |
+| `RAG_ONLY` | Technical manuals, troubleshooting instructions, and unstructured incident evidence |
+| `HYBRID` | Questions requiring both structured and document-based evidence |
 
-When routing confidence is insufficient, the system defaults to `HYBRID`.
-This prioritizes evidence coverage over minimal latency and reduces the risk of
-missing relevant information.
+When the router is uncertain, the system defaults to `HYBRID`. This may use
+more resources, but it reduces the risk of excluding a relevant evidence
+source.
 
 ---
 
-## Trust, Safety, and Explainability
+## What Makes the System Trustworthy
 
 Trustworthiness was treated as a core engineering requirement.
 
 ### Evidence-backed responses
 
-The system is designed to connect generated factual content to retrieved
-evidence, including:
+The system is designed to connect factual statements to supporting evidence,
+including:
 
 - Vendor manuals
 - Historical incidents
 - Knowledge graph facts
 - Device and room relationships
 
-### Citation-aware confidence
+### Citation validation
 
-Confidence is not based only on the language model’s output. It is calculated
-from system signals such as:
+The model uses numbered citation markers that are checked against the evidence
+actually supplied to it. Invalid or unsupported references are not silently
+accepted.
+
+### Confidence scoring
+
+The user-facing confidence score considers signals such as:
 
 - Retrieval strength
 - Exact entity matching
@@ -121,46 +120,40 @@ from system signals such as:
 - Citation coverage
 - Unsupported answer spans
 
-Answers without sufficient citation support cannot receive a high confidence
-score.
+A citation-free response cannot appear highly confident.
 
 ### Explicit uncertainty
 
-When the evidence is weak, incomplete, or unavailable, the system is designed
-to communicate uncertainty instead of presenting unsupported conclusions as
-facts.
+When the available evidence is weak or incomplete, the system is designed to
+communicate uncertainty rather than present unsupported conclusions as facts.
 
 ### Preserved operational history
 
-Device replacement is transactional and history-preserving. Retired devices,
-incident records, installation dates, and replacement relationships remain
-queryable rather than being silently deleted.
+When a device is replaced, the previous device is not silently deleted.
+Installation dates, retirement dates, incidents, room history, and replacement
+relationships remain queryable.
 
-### Operational traceability
+### Graceful provider fallback
 
-The platform exposes health, readiness, and monitoring endpoints. Requests
-can be traced through structured logs using a request identifier, supporting
-debugging, auditing, and demonstration readiness.
-
----
-
-## LLM Provider Strategy
-
-FacilityGraph AI uses:
+GridSense Office uses:
 
 - **Primary provider:** xAI with `grok-4.5`
 - **Fallback provider:** Groq with
   `meta-llama/llama-4-scout-17b-16e-instruct`
 
-Groq is used only for qualifying transient xAI failures, such as:
+Groq is used only for qualifying transient xAI failures such as HTTP `429`,
+timeouts, connection failures, or HTTP `5xx` responses. Authentication and
+configuration errors do not trigger fallback.
 
-- HTTP `429`
-- Request timeout
-- Connection failure
-- HTTP `5xx`
+### Operational visibility
 
-Authentication and configuration errors do not trigger fallback. This avoids
-masking invalid credentials or incorrect deployment settings.
+The system exposes:
+
+- Liveness and readiness checks
+- Prometheus/OpenMetrics-compatible metrics
+- Request latency and error information
+- Request IDs for end-to-end tracing
+- Structured routing and provider logs
 
 ---
 
@@ -173,94 +166,134 @@ The current capstone implementation includes:
 - Cisco, Crestron, and Samsung equipment
 - 24 documented physical and logical relationships
 - 16 historical incident records
-- 10 vendor manuals
+- 10 official vendor manuals
 - A 50-question held-out evaluation dataset
-- Coverage across `GRAPH_ONLY`, `RAG_ONLY`, and `HYBRID` routes
+- Coverage across `GRAPH_ONLY`, `RAG_ONLY`, and `HYBRID`
+- Deliberately out-of-scope questions to test whether the system avoids
+  unsupported guessing
 
-The current scope is intentionally limited to support reliable evaluation,
-clear demonstrations, and controlled iteration.
+The scope is intentionally controlled so the team can evaluate the system
+reliably and demonstrate the complete architecture clearly.
 
 ---
 
 ## Evaluation Approach
 
-The system is evaluated using a held-out dataset that includes:
+The evaluation framework measures the system at several levels.
 
-- Questions for all three routing modes
-- Coverage across the available devices
-- Questions answerable from manuals
-- Questions answerable from graph relationships
-- Questions requiring combined evidence
-- Out-of-scope questions that test whether the system avoids guessing
+### Answer quality
 
-Evaluation dimensions include:
+Answers are assessed for:
 
-- Answer correctness
-- Routing accuracy
+- Grounding in the retrieved evidence
+- Semantic similarity to expected expert answers
+- Correct handling of out-of-scope questions
+
+### Routing quality
+
+The framework measures whether each question is assigned to the correct route:
+
+- `GRAPH_ONLY`
+- `RAG_ONLY`
+- `HYBRID`
+
+### Retrieval quality
+
+The team evaluates whether the correct evidence is retrieved and how highly it
+is ranked using metrics such as:
+
+- Recall@5
+- Mean Reciprocal Rank
+
+### Trust and operations
+
+Additional evaluation areas include:
+
 - Citation validity
 - Confidence calibration
-- Latency
-- Error patterns by route and device
-- Comparison against a plain-RAG baseline
+- p95 latency
+- Error analysis by route and device
+- Baseline and ablation comparisons
 
-The team also documents failure cases and records a next-iteration hypothesis
-for each evaluation cycle. This turns errors into structured input for system
-improvement.
+The system is compared against simpler retrieval approaches to measure the
+value added by explicit routing, graph retrieval, citations, and confidence
+controls.
+
+Evaluation reports are generated in JSON and Markdown, and the team maintains
+documented failure cases with hypotheses for future improvement.
 
 ---
 
 ## Key Operational Capabilities
 
-FacilityGraph AI supports more than question answering.
+GridSense Office supports more than question answering.
 
 ### Device replacement
 
-Authorized users can replace a device through a transactional workflow that:
+Authorized administrators can replace a device through a transactional
+workflow that:
 
 - Retires the original device
-- Creates the replacement device
-- Repoints structural relationships
-- Preserves historical information
-- Records the replacement relationship
-- Optionally ingests the new manual
+- Creates or activates the replacement
+- Repoints live topology relationships
+- Preserves historical room placement
+- Records the `REPLACED_BY` relationship
+- Keeps historical incidents queryable
+- Optionally ingests the replacement manual
 
 ### Incident logging
 
-Technicians and administrators can add incidents that are immediately:
+Technicians and administrators can add incidents that are:
 
-- Written to the knowledge graph
-- Indexed in the vector database
-- Available for retrieval
-- Eligible for citation in future answers
+- Stored in Neo4j
+- Indexed in Weaviate when available
+- Searchable in future requests
+- Eligible for citation in later answers
 
-### Monitoring and diagnostics
+If vector indexing temporarily fails, the incident remains preserved in the
+knowledge graph and can be indexed later.
 
-The application provides:
+### Streaming responses
 
-- Liveness checks
-- Readiness checks
-- Prometheus/OpenMetrics-compatible metrics
-- Request IDs for tracing
-- Structured routing and provider logs
-- Rate limiting for shared and demo environments
+The platform supports both:
+
+- `POST /chat` for complete responses
+- `POST /chat/stream` for token-by-token delivery
+
+This improves perceived responsiveness during demonstrations and interactive
+use.
 
 ---
 
-## Current Limitations
+## Expected Value
 
-The current implementation has several known constraints:
+GridSense Office demonstrates how a hybrid AI architecture can improve smart
+office maintenance by:
+
+- Reducing time spent searching manuals
+- Making historical incidents reusable
+- Preserving technical knowledge across teams
+- Improving visibility into device relationships
+- Supporting faster and more consistent troubleshooting
+- Producing evidence-backed answers
+- Making uncertainty visible
+- Providing a scalable foundation for broader facility-management use cases
+
+---
+
+## Known Limitations
+
+The current implementation has several constraints:
 
 - The deployment is designed primarily for local and demonstration use.
 - The knowledge base covers one limited smart-office environment.
-- Manuals containing diagrams, tables, and scanned pages may require
-  additional preprocessing.
-- Evaluation depth is constrained by external API cost and rate limits.
-- The platform does not yet provide a complete production backup and restore
-  workflow.
+- Complex diagrams, images, tables, and scanned manuals may require additional
+  preprocessing.
+- Evaluation depth is constrained by external provider cost and rate limits.
+- Enterprise authentication is not yet implemented.
+- A complete managed backup and restore workflow is not yet available.
 - Electrical, HVAC, security, and wider building-management systems are not
   yet fully represented.
-- The current mock-user mechanism is suitable for development and demos, not
-  production identity management.
 
 These limitations define the next engineering priorities rather than reducing
 the value of the current proof of concept.
@@ -269,58 +302,41 @@ the value of the current proof of concept.
 
 ## Roadmap
 
-Future development can extend FacilityGraph AI in several stages.
-
 ### Stage 1 — Broader facility coverage
 
-- Add more rooms, devices, and incident histories.
+- Add more rooms, devices, manuals, and incident history.
 - Expand into HVAC, electrical, security, access control, and building
   management systems.
-- Add more vendor manuals and maintenance procedures.
+- Improve extraction from diagrams, tables, and scanned documents.
 
 ### Stage 2 — Production readiness
 
 - Replace mock users with enterprise authentication.
 - Add managed secrets and environment-specific configuration.
 - Implement backup, restore, and retention policies.
-- Harden network access and service permissions.
-- Add centralized monitoring and alerting.
+- Add centralized monitoring, alerts, and audit logging.
+- Harden service permissions and network access.
 
 ### Stage 3 — Advanced intelligence
 
 - Cross-system root-cause analysis
 - Predictive maintenance
 - Incident trend detection
-- Automated maintenance recommendations
 - Technician feedback loops
+- Automated ticket creation
+- Asset-management integration
 - Multi-site knowledge graphs
-- Integration with ticketing and asset-management platforms
-
----
-
-## Expected Value
-
-FacilityGraph AI demonstrates how a hybrid AI architecture can improve smart
-office maintenance by:
-
-- Reducing time spent searching manuals
-- Making historical incidents reusable
-- Preserving technical knowledge across teams
-- Improving visibility into device relationships
-- Producing evidence-backed answers
-- Making uncertainty visible
-- Supporting faster and more consistent troubleshooting
-- Providing an extensible foundation for larger facility-management use cases
 
 ---
 
 ## Bottom Line
 
-FacilityGraph AI is not simply a chatbot over documents. It is an
+GridSense Office is not simply a chatbot over technical documents. It is an
 evidence-driven maintenance assistant that combines semantic retrieval,
-structured facility knowledge, explicit routing, citations, confidence
-scoring, operational controls, and failure-aware evaluation.
+structured facility knowledge, explicit routing, provider resilience,
+validated citations, confidence scoring, streaming responses, and operational
+monitoring.
 
-The capstone shows that a hybrid RAG and Knowledge Graph architecture can
-deliver answers that are more relevant, more traceable, and more operationally
-useful than a conventional retrieval-only assistant.
+The capstone demonstrates that a hybrid RAG and Knowledge Graph architecture
+can deliver answers that are more relevant, more traceable, and more useful
+for real maintenance workflows than a conventional retrieval-only assistant.

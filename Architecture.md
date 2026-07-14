@@ -1,44 +1,48 @@
-# FacilityGraph AI — System Architecture
+# GridSense Office — System Architecture
 
 **System:** Hybrid RAG + Knowledge Graph Assistant for Smart Office Maintenance  
 **Project:** AI.SPIRE Capstone — Group 1, Team 1  
 **Repository:** `https://github.com/capstone-group1-team1/main-repo.git`  
 **Status:** Capstone implementation for local and demonstration environments  
+**Last updated:** 14 July 2026
 
 ---
 
-## 1. Executive Architecture Summary
+## 1. Architecture Overview
 
-FacilityGraph AI is an evidence-driven maintenance assistant that combines
+GridSense Office is an evidence-driven maintenance assistant that combines
 unstructured document retrieval with structured facility knowledge.
 
-The architecture uses two complementary knowledge systems:
+The system uses two complementary knowledge stores:
 
 - **Weaviate** stores semantically searchable content from device manuals and
   historical incident records.
-- **Neo4j** stores rooms, devices, topology, relationships, lifecycle data,
-  incidents, and extracted troubleshooting concepts.
+- **Neo4j** stores devices, rooms, topology, lifecycle information, incidents,
+  and extracted troubleshooting concepts.
 
 An explicit query router selects one of three retrieval strategies:
 
 | Route | Primary purpose |
 |---|---|
-| `GRAPH_ONLY` | Structured relationships, topology, room contents, lifecycle, and incident history |
-| `RAG_ONLY` | Manual instructions, troubleshooting procedures, and document-based evidence |
-| `HYBRID` | Questions requiring both structured and unstructured evidence, or cases where routing is uncertain |
+| `GRAPH_ONLY` | Device relationships, room topology, lifecycle history, and structured facts |
+| `RAG_ONLY` | Manual instructions, troubleshooting procedures, and unstructured incident evidence |
+| `HYBRID` | Questions requiring both structured and unstructured evidence, or cases where routing remains uncertain |
 
-Retrieved evidence is passed to the synthesis layer. xAI generates the answer
-by default, while Groq is used only for qualifying transient xAI failures.
-The response is then processed by the citation and confidence layers before it
-is returned to the user.
+Retrieved evidence is passed through merge and optional reranking stages before
+the synthesis layer generates an answer. xAI is the primary LLM provider;
+Groq is used only for qualifying transient xAI failures.
 
-The architecture is designed around five principles:
+The final response is processed by citation validation and confidence scoring
+before it is returned either as a complete response or as a token stream.
 
-1. **Evidence before generation**
-2. **Explicit and testable routing**
-3. **Traceable citations**
-4. **Visible uncertainty**
-5. **Graceful degradation when a dependency fails**
+### Architectural principles
+
+1. **Retrieve evidence before generation**
+2. **Use explicit, testable routing**
+3. **Preserve source identity end to end**
+4. **Expose uncertainty through confidence scoring**
+5. **Degrade gracefully when one dependency fails**
+6. **Keep operational behavior observable and traceable**
 
 ---
 
@@ -56,24 +60,24 @@ The architecture is designed around five principles:
 │        FastAPI Backend       │
 │       localhost:8000         │
 │                              │
-│  Auth · Permissions · APIs   │
-│  Rate Limits · Observability │
+│ Auth · Permissions · APIs    │
+│ Rate Limits · Observability  │
 └──────────────┬───────────────┘
                │
                ▼
 ┌──────────────────────────────┐
 │         Query Router         │
 │                              │
-│ Entity matching → Rules →    │
-│ LLM fallback → HYBRID default│
+│ Entity Match → Rules →       │
+│ LLM Fallback → HYBRID        │
 └───────┬──────────┬───────────┘
         │          │
         │          │
         ▼          ▼
 ┌──────────────┐  ┌──────────────┐
 │    Neo4j     │  │   Weaviate   │
-│ Graph facts  │  │ Manual and   │
-│ and topology │  │ incident data│
+│ Graph facts  │  │ Manuals and  │
+│ and topology │  │ incidents    │
 └───────┬──────┘  └──────┬───────┘
         │                 │
         └────────┬────────┘
@@ -92,15 +96,15 @@ The architecture is designed around five principles:
                ▼
 ┌──────────────────────────────┐
 │ Citation + Confidence Layer  │
-│ Citation validation          │
+│ Marker validation            │
 │ Unsupported-span detection   │
 │ Route-aware confidence       │
 └──────────────┬───────────────┘
-               ▼
-┌──────────────────────────────┐
-│         ChatResponse         │
-│ Answer · Citations · Score   │
-└──────────────────────────────┘
+               │
+      ┌────────┴────────┐
+      ▼                 ▼
+POST /chat      POST /chat/stream
+Full response   SSE token stream
 ```
 
 ---
@@ -112,6 +116,9 @@ User question
     │
     ▼
 Authentication and permission check
+    │
+    ▼
+Input sanitization
     │
     ▼
 Entity matching
@@ -134,6 +141,9 @@ Rule-based route scoring
                           Graph and/or vector retrieval
                                       │
                                       ▼
+                          Cache lookup or cache update
+                                      │
+                                      ▼
                            Deduplication and reranking
                                       │
                                       ▼
@@ -153,11 +163,12 @@ Rule-based route scoring
                           Route-aware confidence score
                                       │
                                       ▼
-                         Sanitized, traceable response
+                           Sanitized final response
 ```
 
-A retrieval cache may be keyed by the normalized question and resolved route.
-This reduces repeated graph and vector searches for identical requests.
+The retrieval cache is keyed by the question and resolved route. It stores the
+merged candidate evidence before reranking, allowing cache hits to be reranked
+again using the current query and configuration.
 
 ---
 
@@ -165,73 +176,86 @@ This reduces repeated graph and vector searches for identical requests.
 
 ### 4.1 Entity matching
 
-`entity_matcher.py` performs deterministic lookup against device names,
+`entity_matcher.py` performs deterministic matching against device names,
 models, aliases, and room names derived from the project catalog.
 
-Its output supports both:
+Its output supports:
 
 - Route selection
+- Device- or room-specific retrieval
 - Graph-confidence calculation
+- Explainable logging
 
-Entity matching is performed without an LLM, making it fast, explainable, and
-repeatable.
+The matcher does not require an LLM, making it fast, repeatable, and easy to
+test.
 
 ### 4.2 Rule-based classification
 
 `rules.py` scores graph, RAG, and hybrid cue groups.
 
-Examples of likely route signals include:
+Typical signals include:
 
-- Relationship and topology language → graph
-- Troubleshooting and instruction language → RAG
-- Questions combining a device relationship with a symptom → hybrid
+- Relationship or topology language → graph
+- Manual, troubleshooting, or procedure language → RAG
+- Combined relationship and symptom language → hybrid
 
-The rule classifier returns:
+The classifier returns:
 
 - Proposed route
-- Score
+- Route score
 - Margin between the top and second-best route
 - Fired cues
 
-The live margin threshold is supplied through configuration. A compatibility
-default of `0.25` may exist in the router module.
+The live threshold comes from configuration:
+
+```text
+ROUTER_RULE_MARGIN_THRESHOLD
+```
+
+The compatibility default is `0.25`.
 
 ### 4.3 LLM fallback
 
 When deterministic rules are not sufficiently decisive,
-`llm_fallback.py` classifies the route.
+`llm_fallback.py` classifies the route through the shared LLM gateway.
 
-The fallback result is accepted only when its confidence meets the configured
-threshold. A compatibility default of `0.60` may exist in the router module.
+The fallback result is accepted only when its confidence meets:
 
-Routing through the provider layer follows the same provider strategy used by
-the application:
+```text
+ROUTER_FALLBACK_CONF_THRESHOLD
+```
 
-- xAI is primary.
-- Groq is used only for qualifying transient xAI failures.
+The compatibility default is `0.60`.
 
 ### 4.4 Safe default
 
-When both rules and LLM fallback remain uncertain, the router selects
+When both the rules and LLM fallback remain uncertain, the router selects
 `HYBRID`.
 
-This default favors evidence coverage over minimum latency. It may increase
-retrieval and token cost, but it reduces the chance that the system excludes
-a necessary evidence source.
+This choice may increase retrieval latency and token usage, but it reduces the
+risk of excluding a relevant evidence source.
+
+If the LLM route classifier itself fails, the router logs the failure and
+selects `HYBRID` rather than failing the user request.
 
 ### 4.5 Router observability
 
-Each routing decision is logged with:
+Every routing decision is logged with:
 
-- Question or request context
 - Selected route
 - Router confidence
 - Decision mechanism
 - Matched entities
-- Fired cues where available
+- Fired cues, where available
 
-Router confidence is an internal diagnostic signal and is not the same as the
-final user-facing confidence score.
+Decision mechanisms may include:
+
+- `rules`
+- `llm_fallback`
+- `default_hybrid`
+
+Router confidence is an internal diagnostic signal. It is separate from the
+final confidence score shown to the user.
 
 ---
 
@@ -243,142 +267,193 @@ final user-facing confidence score.
 
 The retrieval process may include:
 
-- Query embedding using `BAAI/bge-large-en-v1.5`
+- Query embedding with `BAAI/bge-large-en-v1.5`
 - Dense vector similarity
 - BM25 keyword matching
 - Hybrid fusion controlled by `alpha`
 - Device filtering when an entity is resolved
-- Result limits and evidence-budget controls
+- Configurable result and evidence limits
 
 The vector store contains:
 
 - Manual chunks
-- Historical incident records
-- Citation metadata
+- Historical incidents
+- Source metadata
 - Device and document identifiers
+- Citation metadata
 
 ### 5.2 Graph retrieval
 
-`graph_retriever.py` runs named and parameterized Cypher queries against
-Neo4j.
+`graph_retriever.py` runs named, parameterized Cypher queries against Neo4j.
 
-Graph retrieval is used for facts such as:
+It retrieves facts such as:
 
-- Which devices are located in a room
-- Which devices are connected
-- Which system controls or uses another
+- Devices located in a room
+- Device-to-device connections
+- Control and usage relationships
 - Installation and retirement history
 - Device replacement lineage
 - Associated incidents
 - Extracted symptoms, procedures, components, and error codes
 
-Parameterized queries reduce injection risk and make retrieval behavior easier
-to test.
+Parameterized Cypher improves safety, repeatability, and testability.
 
 ### 5.3 Hybrid merge
 
 For `HYBRID` requests, `hybrid_merger.py` combines graph facts and document
 chunks into one candidate evidence set.
 
-Typical responsibilities include:
+Its responsibilities include:
 
 - Preserving source identity
-- Removing duplicate evidence
+- Deduplicating equivalent evidence
+- Removing enrichment facts already represented by retrieved text
 - Prioritizing structured facts where appropriate
-- Respecting the maximum evidence budget
+- Respecting candidate-pool and evidence-budget limits
 
-### 5.4 Reranking
+### 5.4 Retrieval cache
 
-`reranker.py` uses `BAAI/bge-reranker-base` to rescore candidate evidence
-based on query-passage relevance.
+`retrieval_cache.py` provides an in-process LRU cache keyed by:
+
+```text
+(question, resolved route)
+```
+
+The cache is a performance optimization only. Disabling it should not change
+the expected answer semantics.
+
+The cached value is the merged candidate list before reranking, so each cache
+hit can still pass through the current reranking logic.
+
+### 5.5 Reranking
+
+`reranker.py` uses `BAAI/bge-reranker-base` to rescore candidate evidence by
+query-passage relevance.
 
 The reranker:
 
-1. Receives the merged candidate pool.
+1. Receives the candidate pool.
 2. Scores each candidate against the question.
-3. Sorts by relevance.
+3. Sorts candidates by relevance.
 4. Trims the final evidence set.
 
-When reranking is disabled or unavailable, the system falls back to the merge
-order instead of failing the request.
+Reranking is currently disabled by default through:
 
-### 5.5 Graceful degradation
+```env
+RERANK_ENABLED=false
+```
 
-A failure in one retrieval branch should not automatically fail a hybrid
+The project evaluation showed only a modest Recall@5 improvement relative to
+the added latency for this deployment. The feature remains available through
+configuration without requiring code changes.
+
+If the reranker is disabled or fails to load, the pipeline falls back to the
+deterministic merge order.
+
+### 5.6 Graceful degradation
+
+A failure in one retrieval branch does not automatically fail a hybrid
 request.
 
 Examples:
 
 - Neo4j unavailable → continue with vector evidence when possible.
 - Weaviate unavailable → continue with graph evidence when possible.
-- Reranker unavailable → use deterministic merge order.
+- Reranker unavailable → use merge order.
+- Cache unavailable or disabled → perform normal retrieval.
 
 The final confidence score should reflect reduced evidence quality or missing
-branches.
+retrieval branches.
 
 ---
 
 ## 6. LLM Provider and Synthesis Architecture
 
-### 6.1 Provider strategy
+### 6.1 Shared provider gateway
+
+`groq_client.py` is the shared LLM gateway. The filename is retained from an
+earlier provider design, but the module now handles both providers.
 
 | Priority | Provider | Model | Usage |
 |---|---|---|---|
-| Primary | xAI | `grok-4.5` | Normal synthesis and applicable LLM operations |
+| Primary | xAI | `grok-4.5` | Normal LLM requests |
 | Fallback | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` | Qualifying transient xAI failures |
 
-Groq fallback is triggered only for transient provider failures:
+The gateway is used for:
+
+- Answer synthesis
+- Router LLM fallback
+- Graph enrichment extraction
+- Structured JSON generation
+- Streaming answer generation
+
+### 6.2 Fallback contract
+
+Groq fallback is triggered only for transient xAI failures:
 
 - HTTP `429`
-- Timeout
+- Request timeout
 - Connection failure
 - HTTP `5xx`
 
-The following do not trigger fallback:
+Fallback is not triggered for:
 
 - Invalid API key
 - Invalid base URL
-- Unsupported model configuration
+- Unsupported model
 - Authentication or authorization failure
-- Other configuration errors
+- Malformed configuration
+- Invalid caller request
 
-This distinction prevents deployment errors from being silently hidden.
+This distinction prevents configuration errors from being silently hidden.
 
-### 6.2 Prompt construction
+### 6.3 Streaming behavior
 
-`prompts.py` renders retrieved evidence into numbered source blocks.
+The gateway supports both:
 
-Each block includes enough identity metadata to support citation assembly,
-such as:
+- One-shot generation
+- Streaming generation
+
+For streaming responses, fallback is attempted only before the first token is
+yielded. If a provider fails after streaming begins, the response is not
+restarted with a second provider because that could duplicate content or
+produce an inconsistent answer.
+
+### 6.4 Prompt construction
+
+`prompts.py` renders evidence into numbered source blocks.
+
+Each block includes source identity such as:
 
 - Source type
 - Document or incident identity
-- Page or chunk reference when available
+- Page or chunk reference, where available
 - Device or room association
 - Evidence text
 
 The model is instructed to:
 
 - Use only supplied evidence
-- Attach an `[n]` marker to supported factual claims
+- Add an `[n]` marker to supported factual claims
 - Avoid unsupported speculation
-- State when the available sources do not cover the question
+- State when the evidence does not cover the question
 
-When no usable evidence exists, the application should return a controlled
+When no usable evidence exists, the application returns a controlled
 insufficient-evidence response instead of asking the LLM to guess.
 
-### 6.3 Output protection
+### 6.5 Output protection
 
-The synthesis pipeline should apply output validation and sanitization before
-returning a response.
+`output_guard.py` protects structured and user-facing output by:
 
-Responsibilities may include:
+- Removing model-generated `<think>...</think>` blocks
+- Validating JSON-mode responses
+- Rejecting malformed structured output before callers trust it
 
-- Removing invalid or unsafe output fragments
-- Ensuring citation markers map to real evidence
-- Preventing dangling references
-- Preserving the public API schema
-- Handling provider failures consistently
+`sanitize.py` provides lightweight prompt-injection protection by neutralizing
+common override phrases in both the user question and retrieved evidence.
+
+These controls reduce risk but are not a substitute for full production
+security review.
 
 ---
 
@@ -386,7 +461,7 @@ Responsibilities may include:
 
 ### 7.1 Citation chain
 
-Traceability is maintained across the complete pipeline:
+Traceability is maintained throughout the pipeline:
 
 ```text
 Source file or graph fact
@@ -412,22 +487,22 @@ Public citation in ChatResponse
 
 `citation_assembler.py` is responsible for:
 
-- Parsing citation markers used by the model
-- Rejecting markers that do not map to evidence
+- Parsing citation markers
+- Rejecting markers that do not map to supplied evidence
 - Deduplicating citations
 - Renumbering citations compactly
 - Detecting factual-looking sentences without support
-- Returning unsupported spans for confidence adjustment and UI visibility
+- Returning unsupported spans for confidence adjustment
 
 ### 7.2 Confidence signals
 
-`confidence.py` calculates three related outputs:
+`confidence.py` calculates three related values:
 
 | Signal | Purpose |
 |---|---|
-| Retrieval confidence | Measures the strength and separation of vector retrieval results |
-| Graph confidence | Measures entity match quality, graph path quality, and available graph facts |
-| Final confidence | Produces the route-aware user-facing score after citation and disagreement adjustments |
+| Retrieval confidence | Measures the strength and separation of vector results |
+| Graph confidence | Measures entity match quality, path quality, and graph facts |
+| Final confidence | Produces the route-aware user-facing score |
 
 #### Retrieval confidence
 
@@ -438,25 +513,25 @@ similar, mediocre results.
 
 Graph confidence may consider:
 
-- Exact entity match
-- Number of facts
+- Exact entity matching
+- Fact count
 - Path length
 - Path-length decay such as `0.85^(hops−1)`
 
 #### Final confidence
 
-The final score depends on the resolved route:
+The final score depends on the route:
 
 - `GRAPH_ONLY` emphasizes graph confidence.
 - `RAG_ONLY` emphasizes retrieval confidence.
 - `HYBRID` combines both and may penalize disagreement.
 
-Post-processing rules make uncertainty structural:
+Post-processing rules include:
 
-- Zero citations cap the score at a low level, such as `0.25`.
+- Zero citations cap the final score at `0.25`.
 - Unsupported spans reduce the score proportionally.
-- Missing retrieval branches can reduce the score.
-- Confidence is clamped to the valid range.
+- Missing retrieval branches may reduce the score.
+- The final value is clamped to the valid range.
 
 UI thresholds:
 
@@ -466,8 +541,11 @@ UI thresholds:
 | Medium | `0.40–0.75` |
 | High | `> 0.75` |
 
-The final confidence score should be interpreted as an evidence-quality and
-support signal, not as a mathematical probability that the answer is correct.
+The frontend derives the displayed confidence band from the final numeric
+score. The API confidence schema carries retrieval, graph, and final values.
+
+The final confidence score is an evidence-support signal, not a mathematical
+probability that the answer is correct.
 
 ---
 
@@ -475,14 +553,12 @@ support signal, not as a mathematical probability that the answer is correct.
 
 ### 8.1 Source data
 
-The project uses data under `data/`:
-
 | Source | Purpose |
 |---|---|
-| `asset_inventory.csv` | Devices, rooms, installation details, status, firmware, and warranty data |
-| `relationships.csv` | Physical and logical relationships |
-| `incidents.csv` | Historical incidents |
-| `manuals_pdf/` | Official vendor manuals |
+| `data/asset_inventory.csv` | Devices, rooms, installation details, status, firmware, and warranty data |
+| `data/relationships.csv` | Physical and logical relationships |
+| `data/incidents.csv` | Historical incidents |
+| `data/manuals_pdf/` | Official vendor manuals |
 
 Current capstone scope:
 
@@ -525,17 +601,27 @@ Devices are not silently deleted.
 
 A replacement operation runs as one Neo4j transaction:
 
-1. Retire the old device.
-2. Create the replacement device.
-3. Repoint current structural relationships.
-4. Create `(old)-[:REPLACED_BY]->(new)`.
-5. Preserve prior incidents and lifecycle metadata.
+1. Validate the replacement request.
+2. Retire the old device.
+3. Create or activate the replacement device.
+4. Repoint live topology relationships:
+   - `CONNECTED_TO`
+   - `CONTROLS`
+   - `USES`
+5. Copy current room placement to the new device.
+6. Keep the retired device's `CONTAINS` relationship as historical placement.
+7. Create `(old)-[:REPLACED_BY]->(new)`.
+8. Preserve prior incidents and lifecycle metadata.
 
-This supports historical questions across device generations.
+This supports questions about both current and historical device placement.
 
 ### 8.4 Weaviate model
 
-The vector database uses a collection such as `SmartOfficeChunk`.
+The vector database uses a collection such as:
+
+```text
+SmartOfficeChunk
+```
 
 Each object represents a manual chunk or incident and includes:
 
@@ -545,25 +631,23 @@ Each object represents a manual chunk or incident and includes:
 - Device association
 - Document metadata
 - Citation metadata
-- App-supplied vector
+- Application-supplied vector
 
-The collection uses application-generated embeddings rather than an internal
-Weaviate vectorizer.
+Weaviate uses application-generated embeddings rather than an internal
+vectorizer.
 
 ### 8.5 Idempotent ingestion
 
-The ingestion pipeline uses content hashing and a persistent manifest.
+The ingestion pipeline uses content hashes and a persistent manifest.
 
-Expected behavior:
-
-| Input state | Ingestion result |
+| Input state | Result |
 |---|---|
 | New content | Insert and mark complete |
 | Unchanged content | Skip |
-| Changed content | Replace the source-specific chunks |
-| Interrupted processing | Leave pending and retry on the next run |
+| Changed content | Replace source-specific chunks |
+| Interrupted processing | Leave pending and retry later |
 
-This prevents duplicate chunks and supports safe re-ingestion.
+This prevents duplicate chunks and supports incremental updates.
 
 ---
 
@@ -571,43 +655,45 @@ This prevents duplicate chunks and supports safe re-ingestion.
 
 | Area | Main files | Responsibility |
 |---|---|---|
-| Core configuration | `core/config.py` | Environment-backed settings and shared client factories |
-| Logging | `core/logging.py` | Structured application logs and router-decision events |
-| Observability | `core/observability.py` | Request IDs, health/readiness behavior, and metrics |
-| Rate limiting | `core/rate_limit.py` | Shared request limits by endpoint group |
+| Core configuration | `core/config.py` | Environment-backed settings and cached client factories |
+| Logging | `core/logging.py` | Structured logs and router-decision events |
+| Observability | `core/observability.py` | Metrics middleware, request IDs, and operational instrumentation |
+| Rate limiting | `core/rate_limit.py` | Shared `slowapi` limiter and endpoint limits |
 | API contracts | `models/schemas.py` | Public response models and internal evidence types |
 | Authentication | `auth/mock_users.py` | Seeded development and demo users |
 | Authorization | `auth/permissions.py` | Role-to-action permission checks |
-| Routing | `router/entity_matcher.py` | Device, room, model, and alias matching |
+| Routing | `router/entity_matcher.py` | Device, model, alias, and room matching |
 | Routing | `router/rules.py` | Deterministic cue-based route scoring |
-| Routing | `router/llm_fallback.py` | Route classification when rules are uncertain |
-| Routing | `router/query_router.py` | Routing orchestration and safe HYBRID default |
+| Routing | `router/llm_fallback.py` | LLM route classification when rules are uncertain |
+| Routing | `router/query_router.py` | Routing orchestration and HYBRID default |
 | Ingestion | `ingestion/pdf_reader.py` | PDF text extraction |
-| Ingestion | `ingestion/chunker.py` | Semantic document chunking |
+| Ingestion | `ingestion/chunker.py` | Semantic chunking |
 | Ingestion | `ingestion/embedder.py` | Embedding generation |
-| Ingestion | `ingestion/hash_store.py` | Ingestion manifest and content hashes |
+| Ingestion | `ingestion/hash_store.py` | Manifest and content hashes |
 | Ingestion | `ingestion/weaviate_store.py` | Weaviate persistence |
-| Ingestion | `ingestion/catalog.py` | Device and room catalog derived from source data |
+| Ingestion | `ingestion/catalog.py` | Device and room catalog from source data |
 | Ingestion | `ingestion/pipeline.py` | End-to-end ingestion orchestration |
-| Graph enrichment | `extraction/extractor.py` | Controlled extraction of troubleshooting concepts |
+| Graph enrichment | `extraction/extractor.py` | Controlled troubleshooting-concept extraction |
 | Graph | `graph/graph_loader.py` | Base graph loading |
 | Graph | `graph/device_replacement.py` | Transactional device replacement |
 | Retrieval | `retrieval/vector_retriever.py` | Dense, BM25, and hybrid search |
 | Retrieval | `retrieval/graph_retriever.py` | Parameterized Cypher retrieval |
 | Retrieval | `retrieval/hybrid_merger.py` | Evidence merge and deduplication |
-| Retrieval | `retrieval/reranker.py` | Cross-encoder relevance reranking |
-| Synthesis | `synthesis/groq_client.py` | LLM provider gateway and provider-fallback behavior |
+| Retrieval | `retrieval/retrieval_cache.py` | In-process LRU retrieval cache |
+| Retrieval | `retrieval/reranker.py` | Optional cross-encoder reranking |
+| Synthesis | `synthesis/groq_client.py` | Shared LLM provider gateway |
+| Synthesis | `synthesis/output_guard.py` | Reasoning-block removal and JSON validation |
+| Synthesis | `synthesis/sanitize.py` | Lightweight prompt-injection defense |
 | Synthesis | `synthesis/prompts.py` | Evidence-aware prompt rendering |
 | Synthesis | `synthesis/citation_assembler.py` | Citation validation and unsupported-span detection |
 | Synthesis | `synthesis/confidence.py` | Retrieval, graph, and final confidence |
-| Synthesis | `synthesis/sanitize.py` | Output sanitization and protection |
-| APIs | `api/routes_chat.py` | Chat orchestration endpoint |
+| APIs | `api/routes_chat.py` | Complete and streaming chat orchestration |
 | APIs | `api/routes_devices.py` | Device read operations |
 | APIs | `api/routes_incidents.py` | Incident operations |
 | APIs | `api/routes_admin.py` | Administrative operations |
 
-API route modules should remain thin. Business logic belongs in domain,
-retrieval, graph, ingestion, and synthesis modules rather than HTTP handlers.
+API route modules should remain thin. Business logic belongs in routing,
+retrieval, graph, ingestion, and synthesis modules.
 
 ---
 
@@ -618,9 +704,9 @@ The application exposes:
 | Endpoint | Purpose |
 |---|---|
 | `GET /healthz` | Liveness |
-| `GET /readyz` | Dependency readiness |
+| `GET /readyz` | Neo4j and Weaviate readiness |
 | `GET /metrics` | Prometheus/OpenMetrics-compatible metrics |
-| `GET /users` | Verification of seeded mock users |
+| `GET /users` | Seeded mock-user verification |
 
 Observability includes:
 
@@ -628,16 +714,16 @@ Observability includes:
 - HTTP status counts
 - Latency histogram
 - In-flight request gauge
-- Structured router decisions
+- Router decisions
 - Provider selection and fallback events
 - Ingestion events
 - Request-level correlation through `X-Request-ID`
 
-Recommended investigation path:
+Recommended investigation sequence:
 
 1. Locate the request ID.
-2. Confirm request start.
-3. Inspect route selection.
+2. Confirm the request reached the API.
+3. Inspect entity matching and routing.
 4. Inspect graph and vector retrieval.
 5. Check provider selection and fallback.
 6. Inspect citations and confidence.
@@ -653,19 +739,20 @@ Typical permissions include:
 
 - Operators can ask questions and view data.
 - Technicians can log incidents.
-- Administrators can perform device replacement.
+- Administrators can replace devices.
 
-Security controls include:
+Current controls include:
 
 - Parameterized Cypher
 - Environment-based secrets
 - CORS configuration
 - Rate limiting
+- Input sanitization
 - Output validation
 - Transactional writes
 - Request tracing
 
-Production deployment should replace mock authentication and add:
+Production deployment should add:
 
 - Enterprise identity integration
 - Secure secret management
@@ -682,14 +769,14 @@ Production deployment should replace mock authentication and add:
 
 ### 12.1 Local and demo deployment
 
-Docker Compose runs:
+Docker Compose runs four services:
 
-- Neo4j
-- Weaviate
-- FastAPI API
-- Next.js frontend
+- `neo4j`
+- `weaviate`
+- `api`
+- `web`
 
-Default local addresses:
+Default addresses:
 
 | Service | Address |
 |---|---|
@@ -718,10 +805,17 @@ Frontend configuration:
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
-### 12.3 Cloud migration path
+### 12.3 Container images
 
-A production-style deployment can replace local services with managed
-alternatives:
+- The frontend uses a multi-stage Docker build.
+- The builder compiles the Next.js application.
+- The runtime image ships only the required standalone output.
+- The backend currently uses a Python 3.11 slim image with required build
+  dependencies for machine-learning packages.
+
+### 12.4 Cloud migration path
+
+Potential managed targets include:
 
 | Local component | Possible managed target |
 |---|---|
@@ -732,10 +826,9 @@ alternatives:
 | Local secrets | Managed secret store |
 | Local metrics | Central monitoring platform |
 
-The application is designed so connection details and provider configuration
-are supplied through environment settings. Migration should therefore require
-limited application-code change, although production hardening, identity,
-networking, backup, and observability work would still be required.
+Most connection details are environment-driven, but production migration
+still requires work in identity, networking, backups, security, and
+observability.
 
 ---
 
@@ -743,18 +836,22 @@ networking, backup, and observability work would still be required.
 
 | Failure | Intended behavior |
 |---|---|
-| Rules are uncertain | Invoke LLM route fallback |
+| Rules are uncertain | Invoke the LLM route fallback |
 | Router fallback remains uncertain | Use `HYBRID` |
+| Router LLM call fails | Log the failure and use `HYBRID` |
 | xAI transient provider failure | Use Groq fallback |
-| xAI configuration or authentication failure | Fail visibly; do not hide the error through fallback |
+| xAI configuration or authentication failure | Fail visibly; do not hide the error |
 | Graph retrieval fails during HYBRID | Continue with vector evidence when possible |
 | Vector retrieval fails during HYBRID | Continue with graph evidence when possible |
-| Reranker fails | Use deterministic merged order |
+| Reranker is disabled or fails | Use deterministic merge order |
+| Cache is disabled or misses | Perform normal retrieval |
 | No evidence is found | Return a controlled insufficient-evidence response |
-| Citation marker is invalid | Drop or reject the dangling citation |
-| Answer contains unsupported spans | Flag them and reduce final confidence |
-| Device replacement fails | Roll back the full Neo4j transaction |
-| Ingestion is interrupted | Mark pending and retry during the next run |
+| Citation marker is invalid | Reject the dangling citation |
+| Answer contains unsupported spans | Flag them and reduce confidence |
+| Device replacement fails | Roll back the Neo4j transaction |
+| Ingestion is interrupted | Mark pending and retry later |
+| Streaming fails before first token | Attempt provider fallback |
+| Streaming fails after tokens begin | End without restarting on another provider |
 
 ---
 
@@ -764,42 +861,57 @@ networking, backup, and observability work would still be required.
 
 Benefits:
 
-- Deterministic behavior for common requests
 - Lower cost
-- Lower latency
-- Testability
+- Lower latency for common requests
+- Deterministic behavior
+- Testable route rules
 - Explainable fired cues
-- Safe `HYBRID` fallback
+- Safe HYBRID fallback
+
+### Shared LLM gateway
+
+All LLM-dependent features use one provider contract, so retries, fallback,
+timeouts, logging, and error handling remain consistent.
 
 ### Separate graph and vector retrieval
 
 The stores solve different information needs:
 
-- Weaviate answers semantic document questions.
-- Neo4j answers relationship and lifecycle questions.
+- Weaviate handles semantic document evidence.
+- Neo4j handles relationships, lifecycle, and topology.
 
-Keeping them separate preserves the strengths of each representation.
+### Optional reranking based on measured value
+
+The reranker remains available, but is disabled by default because its measured
+recall improvement did not justify the additional latency for the current
+deployment.
 
 ### Route-aware confidence
 
-A single generic score would hide whether confidence comes from documents,
-graph structure, or both. Route-aware calculation makes the score more
-meaningful and allows disagreement penalties for hybrid requests.
+The final score reflects the type of evidence used and can penalize
+disagreement between graph and retrieval signals.
 
 ### Citation-constrained answers
 
-The citation pipeline prevents fluent but unsupported responses from appearing
-highly reliable.
+Citation validation prevents unsupported references from being accepted and
+prevents citation-free answers from appearing highly reliable.
 
 ### Idempotent ingestion
 
-Hash-gated ingestion reduces duplicate data, supports incremental updates,
-and makes repeated setup and demonstrations safer.
+Hash-gated ingestion supports incremental updates, avoids duplicate chunks,
+and repairs interrupted processing.
 
 ### Transactional lifecycle operations
 
-Device replacement is treated as a domain transaction, preserving history and
-preventing partially applied graph changes.
+Device replacement preserves history and prevents partially applied graph
+updates.
+
+### Evaluation without an LLM judge
+
+Grounding and correctness are measured through semantic similarity against
+evidence and human-written references. This reduces cost and improves
+repeatability, while introducing known limitations that must be interpreted
+carefully.
 
 ---
 
@@ -807,21 +919,19 @@ preventing partially applied graph changes.
 
 - The knowledge base covers a limited smart-office environment.
 - The system is designed primarily for local and demonstration deployment.
-- Complex diagrams, images, and tables in manuals may require additional
-  extraction or multimodal processing.
-- Evaluation depth is constrained by external provider cost and rate limits.
-- The project does not yet include enterprise authentication.
-- Managed backup and disaster recovery are not yet implemented.
-- The mock user header is unsuitable for untrusted public deployment.
+- Complex diagrams, images, and tables may require additional extraction.
+- Evaluation depth is constrained by provider cost and rate limits.
+- Semantic-similarity evaluation may miss some factual errors.
+- Enterprise authentication is not implemented.
+- Managed backup and disaster recovery are not implemented.
+- Mock-user headers are unsuitable for public deployment.
 - Cross-building and cross-site reasoning are outside the current scope.
 
 ---
 
 ## 16. Future Architecture
 
-Potential next stages include:
-
-### Broader domain coverage
+### Broader facility coverage
 
 - HVAC
 - Electrical systems
@@ -836,7 +946,7 @@ Potential next stages include:
 - Managed secrets
 - TLS
 - Private networking
-- Centralized logs and metrics
+- Centralized logging and metrics
 - Alerting
 - Automated backups
 - Restore testing
@@ -870,17 +980,24 @@ docker compose config --quiet
 docker compose build api web
 ```
 
-Additional recommended checks:
+Run the full backend tests:
 
 ```bash
-cd backend
-pytest tests -q
+PYTHONPATH=backend pytest -q backend/tests
 ```
 
-With the full stack running and seeded:
+With the stack running and seeded, verify both chat modes:
 
 ```bash
-python scripts/smoke_test.py
+curl -s http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -H "X-Mock-User-Id: u-ali" \
+  -d '{"question":"The Samsung display has no signal. What should I check?"}'
+
+curl -N -X POST http://localhost:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "X-Mock-User-Id: u-ali" \
+  -d '{"question":"The Samsung display has no signal. What should I check?"}'
 ```
 
 Architecture changes should also be reflected consistently in:
@@ -889,6 +1006,6 @@ Architecture changes should also be reflected consistently in:
 - `Setup.md`
 - `Runbook.md`
 - `Executive_Briefing.md`
-- Environment templates
+- `.env.example`
 - Docker health checks
 - Evaluation documentation

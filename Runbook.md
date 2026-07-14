@@ -1,62 +1,64 @@
-# FacilityGraph AI — Operations Runbook
+# GridSense Office — Operations Runbook
 
-This runbook provides the operational procedures required to start, verify,
-monitor, troubleshoot, recover, and demonstrate FacilityGraph AI.
+This runbook defines the operational procedures for starting, verifying,
+monitoring, troubleshooting, recovering, and demonstrating GridSense Office.
 
 **Audience:** Developers, operators, demo owners, and maintainers  
 **Repository:** `https://github.com/capstone-group1-team1/main-repo.git`  
 **Companion documentation:**
 
 - [`README.md`](./README.md) — project overview and quick start
-- [`Setup.md`](./Setup.md) — first-time installation and environment setup
-- [`Architecture.md`](./Architecture.md) — internal architecture and design
+- [`Setup.md`](./Setup.md) — first-time installation and configuration
+- [`Architecture.md`](./Architecture.md) — internal system architecture
 - [`Executive_Briefing.md`](./Executive_Briefing.md) — non-technical overview
 
 ---
 
 ## 1. Operational Overview
 
-FacilityGraph AI is a hybrid RAG and Knowledge Graph assistant for smart
-office maintenance. The application combines:
+GridSense Office is a hybrid RAG and Knowledge Graph assistant for smart
+office maintenance.
 
-- A Next.js user interface
+The system combines:
+
+- A Next.js frontend
 - A FastAPI backend
-- Neo4j for structured device, room, relationship, and incident data
-- Weaviate for semantic retrieval over manuals and incidents
+- Neo4j for structured facility knowledge
+- Weaviate for semantic retrieval
 - xAI as the primary LLM provider
-- Groq as a controlled fallback provider
-- Prometheus/OpenMetrics-compatible observability endpoints
+- Groq as the fallback LLM provider
+- Prometheus/OpenMetrics-compatible observability
+- Role-based access controls
+- Citation validation and confidence scoring
 
-### LLM provider behavior
+### LLM provider strategy
 
 | Provider | Model | Role |
 |---|---|---|
 | xAI | `grok-4.5` | Primary LLM provider |
 | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` | Fallback for qualifying transient xAI failures |
 
-Groq fallback is used only when xAI encounters one of the following transient
-conditions:
+Groq fallback is used only when xAI encounters:
 
 - HTTP `429`
 - Request timeout
 - Connection failure
 - HTTP `5xx`
 
-Authentication and configuration errors do **not** trigger fallback. These
-errors must be corrected in the environment configuration.
+Authentication and configuration errors do not trigger fallback.
 
 ---
 
-## 2. System Components and Addresses
+## 2. System Components
 
 | Component | Responsibility | Address |
 |---|---|---|
 | Frontend | Next.js user interface | `http://localhost:3000` |
-| Backend API | Request orchestration, permissions, routing, retrieval, and synthesis | `http://localhost:8000` |
+| Backend API | Routing, retrieval, synthesis, permissions, and orchestration | `http://localhost:8000` |
 | API documentation | FastAPI Swagger UI | `http://localhost:8000/docs` |
-| Neo4j Browser | Knowledge graph administration | `http://localhost:7474` |
+| Neo4j Browser | Graph administration and inspection | `http://localhost:7474` |
 | Neo4j Bolt | Application graph connection | `bolt://localhost:7687` |
-| Weaviate REST | Vector database REST interface | `http://localhost:8080` |
+| Weaviate REST | Vector database REST endpoint | `http://localhost:8080` |
 | Weaviate gRPC | Weaviate v4 client connection | `localhost:50051` |
 | xAI | Primary external LLM API | Configured through `.env` |
 | Groq | External fallback LLM API | Configured through `.env` |
@@ -71,7 +73,7 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 
 ## 3. Required Environment Configuration
 
-The root `.env` file must contain the configured LLM providers:
+The root `.env` file must include:
 
 ```env
 XAI_API_KEY=your_xai_api_key
@@ -82,10 +84,11 @@ GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 ```
 
-Common optional settings include:
+Common optional settings may include:
 
 ```env
 ENABLE_GRAPH_ENRICHMENT=true
+RERANK_ENABLED=false
 LOG_LEVEL=INFO
 CORS_ORIGINS=http://localhost:3000
 ```
@@ -93,9 +96,10 @@ CORS_ORIGINS=http://localhost:3000
 Operational requirements:
 
 - Never commit `.env` or API keys.
-- Do not hardcode secrets in source files.
+- Do not hardcode secrets in tracked files.
 - Restrict `CORS_ORIGINS` to trusted frontend origins.
 - Replace default database credentials before shared or production-style use.
+- Restart or recreate the API container after environment changes.
 
 ---
 
@@ -103,7 +107,7 @@ Operational requirements:
 
 Run these commands from the repository root.
 
-### 4.1 Start only the data services
+### 4.1 Start Neo4j and Weaviate only
 
 Use this mode when running the backend and frontend manually:
 
@@ -114,14 +118,24 @@ docker compose ps
 
 ### 4.2 Start the complete stack
 
-This builds and starts Neo4j, Weaviate, the API, and the frontend:
-
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-Wait until the required services report a healthy status.
+This starts:
+
+- Neo4j
+- Weaviate
+- FastAPI backend
+- Next.js frontend
+
+Use a no-cache build only when diagnosing stale dependencies or images:
+
+```bash
+docker compose build --no-cache api web
+docker compose up -d
+```
 
 ### 4.3 View logs
 
@@ -132,36 +146,36 @@ docker compose logs -f neo4j
 docker compose logs -f weaviate
 ```
 
-To show only recent lines:
+Show only recent lines:
 
 ```bash
 docker compose logs --tail=100 api
 ```
 
-### 4.4 Restart a service
+### 4.4 Restart one service
 
 ```bash
 docker compose restart api
 ```
 
-Replace `api` with `web`, `neo4j`, or `weaviate` as needed.
+Replace `api` with `web`, `neo4j`, or `weaviate` as required.
 
 ### 4.5 Stop the stack
 
-Stop services while preserving persistent data:
+Preserve persistent data:
 
 ```bash
 docker compose down
 ```
 
-Stop services and remove Neo4j and Weaviate volumes:
+Remove Neo4j and Weaviate volumes:
 
 ```bash
 docker compose down -v
 ```
 
-> **Warning:** `docker compose down -v` removes persisted graph and vector
-> data. Use it only when a full reset is intended.
+> **Warning:** `docker compose down -v` is destructive and removes persisted
+> graph and vector data.
 
 ---
 
@@ -171,10 +185,10 @@ docker compose down -v
 
 | Endpoint | Purpose | Expected behavior |
 |---|---|---|
-| `GET /healthz` | Application liveness | Confirms that the API process is running |
+| `GET /healthz` | Liveness | Returns `{"status":"ok"}` when the API process is running |
 | `GET /readyz` | Dependency readiness | Returns `503` when Neo4j or Weaviate is unavailable |
 | `GET /metrics` | Prometheus/OpenMetrics metrics | Exposes request counts, latency, and in-flight requests |
-| `GET /users` | Seeded user verification | Confirms that the five mock users are available |
+| `GET /users` | Seeded-user verification | Confirms the five mock users are loaded |
 
 Examples:
 
@@ -193,7 +207,7 @@ Check Weaviate readiness:
 curl -i http://localhost:8080/v1/.well-known/ready
 ```
 
-Check container health:
+Check service status:
 
 ```bash
 docker compose ps
@@ -207,15 +221,19 @@ http://localhost:7474
 
 ### 5.3 Request tracing
 
-API responses include an `X-Request-ID` header. The same identifier is written
-to the backend logs and should be used to trace a request across:
+Every API response includes an `X-Request-ID` header.
+
+Use the request ID to trace:
 
 - Request start and completion
-- Router decision
-- Retrieval operations
-- LLM provider calls
-- Response assembly
-- Errors
+- Routing decision
+- Graph retrieval
+- Vector retrieval
+- LLM provider selection
+- Fallback behavior
+- Citation assembly
+- Confidence calculation
+- Final response or exception
 
 Example:
 
@@ -223,7 +241,7 @@ Example:
 curl -i http://localhost:8000/healthz
 ```
 
-Copy the returned `X-Request-ID`, then search the API logs for that value.
+Copy the returned `X-Request-ID`, then search the API logs for the same value.
 
 ---
 
@@ -233,21 +251,22 @@ Complete these checks before a live demonstration:
 
 - [ ] `.env` exists and contains valid xAI and Groq settings.
 - [ ] `docker compose config --quiet` succeeds.
-- [ ] All required containers are healthy.
-- [ ] `/healthz` returns successfully.
+- [ ] Required containers are healthy.
+- [ ] `/healthz` succeeds.
 - [ ] `/readyz` confirms Neo4j and Weaviate readiness.
 - [ ] The frontend loads at `http://localhost:3000`.
-- [ ] At least one known `GRAPH_ONLY` question succeeds.
-- [ ] At least one known `RAG_ONLY` question succeeds.
-- [ ] At least one known `HYBRID` question succeeds.
-- [ ] Citations are visible and correctly numbered.
+- [ ] `POST /chat` succeeds.
+- [ ] `POST /chat/stream` streams correctly.
+- [ ] A known `GRAPH_ONLY` question succeeds.
+- [ ] A known `RAG_ONLY` question succeeds.
+- [ ] A known `HYBRID` question succeeds.
+- [ ] Citations are visible and correctly mapped.
 - [ ] Confidence badges appear as expected.
-- [ ] Device and incident views load.
-- [ ] API and container logs show no unresolved errors.
-- [ ] A recent backup or reproducible reseeding path is available.
-- [ ] The team knows who owns each technical area during Q&A.
+- [ ] Devices and incidents load.
+- [ ] API logs contain no unresolved errors.
+- [ ] The team knows the owner of each technical area.
 
-Recommended pre-demo command sequence:
+Recommended sequence:
 
 ```bash
 docker compose config --quiet
@@ -255,35 +274,41 @@ docker compose up -d --build
 docker compose ps
 curl http://localhost:8000/healthz
 curl -i http://localhost:8000/readyz
-python scripts/smoke_test.py
+PYTHONPATH=backend pytest -q backend/tests
 ```
 
 ---
 
 ## 7. Common Operational Procedures
 
-## 7.1 Replace a Device
+### 7.1 Replace a Device
 
 **Endpoint:** `POST /devices/replace`  
 **Required role:** `admin`
 
-The replacement operation runs as a single Neo4j transaction. It:
+The replacement operation runs as one Neo4j transaction.
 
-1. Retires the old device.
-2. Creates the replacement device.
-3. Repoints structural relationships.
-4. Creates a `REPLACED_BY` relationship.
-5. Preserves the old device and its historical incidents.
-6. Re-ingests a supplied replacement manual when applicable.
+It:
 
-The old device is never deleted, preserving:
+1. Validates the request and replacement device.
+2. Retires the old device.
+3. Creates or activates the replacement device.
+4. Repoints live-topology relationships:
+   - `CONNECTED_TO`
+   - `CONTROLS`
+   - `USES`
+5. Copies the current room placement to the new device.
+6. Keeps the old `CONTAINS` relationship for historical placement.
+7. Creates `(old)-[:REPLACED_BY]->(new)`.
+8. Preserves incidents, install dates, and retirement dates.
+9. Re-ingests the replacement manual when applicable.
 
-- Incident history
-- Installation dates
-- Retirement dates
-- Replacement lineage
+The old device is never deleted.
 
-### Expected responses
+If `manual_pdf_filename` is supplied, the replacement device must already
+exist in `asset_inventory.csv`. This validation occurs before graph mutation.
+
+#### Expected responses
 
 - **Success:** Returns a `ReplacementSummary`.
 - **Failure:** Returns HTTP `409` with fields such as:
@@ -296,46 +321,47 @@ The old device is never deleted, preserving:
 }
 ```
 
-The transaction is fully rolled back on failure. No partial replacement should
-require manual cleanup.
+The transaction is fully rolled back on failure.
 
-### Post-operation verification
+#### Post-operation verification
 
 - Confirm the old device remains queryable.
 - Confirm the new device exists.
-- Confirm `REPLACED_BY` is present.
-- Confirm structural relationships point to the new device.
-- Confirm relevant incident history remains attached to the retired device.
-- Confirm the replacement manual is searchable when one was supplied.
+- Confirm `REPLACED_BY` exists.
+- Confirm live-topology relationships point to the new device.
+- Confirm historical room placement remains available.
+- Confirm old incidents remain attached to the retired device.
+- Confirm the replacement manual is searchable when supplied.
 
 ---
 
-## 7.2 Log an Incident
+### 7.2 Log an Incident
 
 **Endpoint:** `POST /incidents`  
 **Required role:** `technician` or `admin`
 
 Operators receive HTTP `403`.
 
-A successful incident operation:
+The operation:
 
-1. Creates the incident node in Neo4j.
-2. Creates the appropriate `HAS_INCIDENT` relationship.
-3. Indexes the incident in Weaviate.
-4. Makes the incident available for retrieval and citation.
+1. Creates the incident in Neo4j.
+2. Creates the `HAS_INCIDENT` relationship.
+3. Attempts to index the incident in Weaviate.
+4. Makes the incident available for future retrieval and citation.
 
-No separate re-ingestion step is required.
+If Weaviate indexing fails, the incident remains stored in Neo4j. The vector
+indexing step can be retried during a later ingestion run.
 
-### Post-operation verification
+#### Post-operation verification
 
-- Confirm the API returns a success response.
+- Confirm the API returns success.
 - Confirm the incident appears in the incident view.
-- Ask a question that should retrieve the new incident.
+- Ask a question that should retrieve the incident.
 - Confirm the answer cites the incident where relevant.
 
 ---
 
-## 7.3 Add or Re-ingest a Manual
+### 7.3 Add or Re-ingest a Manual
 
 Place the PDF in:
 
@@ -343,63 +369,60 @@ Place the PDF in:
 data/manuals_pdf/
 ```
 
-Use the naming rules documented in [`Setup.md`](./Setup.md).
-
-Run the complete seed process:
+For an existing device:
 
 ```bash
-bash scripts/seed_all.sh
+docker compose exec api python -m app.ingestion.pipeline
 ```
 
-Or run only the ingestion pipeline:
+For a new device, load the graph first:
 
 ```bash
-cd backend
-python -m app.ingestion.pipeline
+docker compose exec api python -m app.graph.graph_loader
+docker compose exec api python -m app.ingestion.pipeline
 ```
 
-### Ingestion behavior
+#### Ingestion behavior
 
 | Situation | Expected behavior |
 |---|---|
 | Same content uploaded again | Content hash matches; duplicate ingestion is skipped |
-| Same content under a different filename | Content hash matches; duplicate chunks are not created |
-| Manual content changes | Old chunks are replaced and the manifest version advances |
-| Process is interrupted | The item remains pending and is retried on the next run |
-| Manual is missing | The pipeline logs a warning and continues |
-| PDF contains no extractable text | The file is rejected and must be replaced with a text-based PDF |
+| Same content under another filename | Duplicate chunks are not created |
+| Manual content changes | Old source-specific chunks are replaced |
+| Process is interrupted | The item remains pending and is retried |
+| Manual is missing | A warning is logged and processing continues |
+| PDF contains no text layer | The file is rejected |
 
-When graph enrichment is enabled, ingestion may call the LLM once per manual
-chunk. xAI is used first, while Groq is reserved for qualifying transient
-failures.
+When graph enrichment is enabled, ingestion may call the LLM per manual chunk.
+xAI is primary, and Groq is reserved for qualifying transient failures.
 
 ---
 
-## 8. Testing and Validation
+## 8. Testing and Evaluation
 
-### 8.1 Complete backend test suite
+### 8.1 Unit tests
+
+Run from the repository root:
 
 ```bash
-cd backend
-pytest tests -q
+PYTHONPATH=backend pytest -q backend/tests
 ```
 
 The suite covers areas such as:
 
-- Query routing
+- Router rules
+- Held-out routing behavior
+- LLM provider fallback
+- Streaming fallback behavior
 - Confidence calculations
 - Citation assembly
-- Document chunking
 - Permission handling
-- Output safety
-- LLM provider fallback behavior
+- Output protection
 
-Live database and external provider calls should not be required for unit
-tests when mocks and test fixtures are used.
+Unit tests should not require live databases or external provider calls when
+test fixtures and mocks are active.
 
-### 8.2 Required validation checks
-
-Run from the repository root:
+### 8.2 Focused validation
 
 ```bash
 python -m compileall -q backend/app backend/tests
@@ -408,40 +431,31 @@ docker compose config --quiet
 docker compose build api web
 ```
 
-These checks validate:
+### 8.3 Evaluation
 
-- Python syntax
-- Output guard behavior
-- xAI-to-Groq fallback behavior
-- Docker Compose configuration
-- API image build
-- Frontend image build
-
-### 8.3 Smoke test
-
-Requires a running and seeded backend:
-
-```bash
-python scripts/smoke_test.py
-```
-
-The smoke test should verify:
-
-- Health endpoint availability
-- One request per routing mode
-- Expected response structure
-- Citation and confidence fields
-
-### 8.4 Evaluation
+Fast evaluation:
 
 ```bash
 cd eval
-python run_eval.py --subset smoke
-python run_eval.py
-python run_eval.py --baseline
+python -u run_eval.py --subset smoke --skip-health
 ```
 
-Generated reports are written to:
+Full evaluation:
+
+```bash
+python -u run_eval.py
+```
+
+Useful optional flags may include:
+
+```text
+--seeds N
+--skip-ablation
+--skip-ladder
+--base-url URL
+```
+
+Reports are written to:
 
 ```text
 eval/reports/
@@ -455,14 +469,15 @@ eval/failure_cases.md
 
 Evaluation outputs may include:
 
-- Answer correctness
+- Grounded rate
+- Correctness rate
 - Routing accuracy
-- Citation validity
 - Confidence calibration
+- Retrieval Recall@5
+- Mean Reciprocal Rank
 - p95 latency
 - Error analysis by route and device
-- Baseline comparisons
-- Next-iteration hypotheses
+- Baseline and ablation comparisons
 
 ---
 
@@ -470,7 +485,7 @@ Evaluation outputs may include:
 
 | Endpoint group | Limit |
 |---|---:|
-| `POST /chat` | 20 requests per minute |
+| `POST /chat` and `POST /chat/stream` | 20 requests per minute |
 | Write endpoints | 10 requests per minute |
 | All other endpoints | 120 requests per minute |
 
@@ -480,14 +495,14 @@ Write endpoints include:
 - `POST /devices/replace`
 
 Keep rate limiting enabled in shared and demo environments to protect service
-availability and control xAI and Groq API usage.
+availability and control xAI and Groq usage.
 
-When a client receives HTTP `429` from the application:
+When the application returns HTTP `429`:
 
-1. Stop repeated immediate retries.
+1. Stop immediate repeated retries.
 2. Apply backoff.
 3. Retry after the rate-limit window.
-4. Check `/metrics` and API logs when unexpected traffic is suspected.
+4. Inspect `/metrics` and API logs if traffic is unexpected.
 
 ---
 
@@ -495,112 +510,87 @@ When a client receives HTTP `429` from the application:
 
 | Symptom | Likely cause | Corrective action |
 |---|---|---|
-| Answer has low confidence or no citations | No relevant evidence was retrieved, supporting evidence was insufficient, or routing selected an unsuitable single route | Inspect `router.decisions`, matched entities, retrieved evidence, and citation assembly logs |
-| Incorrect retrieval route | Rules were inconclusive or entity matching did not detect the intended device or room | Inspect fired cues, route margin, fallback decision, and entity matches |
-| HTTP `403` on `POST /incidents` | Current user has the `operator` role | Use a technician or admin user |
-| HTTP `409` on `POST /devices/replace` | A replacement precondition failed | Read `failed_step` and `reason`; the transaction should already be rolled back |
-| `/healthz` fails | API process is unavailable or failed during startup | Inspect `docker compose logs api` |
-| `/readyz` returns `503` | Neo4j or Weaviate is unavailable | Run `docker compose ps`, then inspect the affected service logs |
-| Weaviate connection error | REST or gRPC connectivity is unavailable | Verify ports `8080` and `50051` and confirm container health |
-| Neo4j connection error | Neo4j is not healthy or credentials are incorrect | Inspect `docker compose logs neo4j` and verify the configured credentials |
-| Missing `XAI_API_KEY` | Root `.env` is missing or incomplete | Set `XAI_API_KEY`, `XAI_BASE_URL`, and `XAI_MODEL` |
-| Missing Groq settings | Fallback configuration is incomplete | Set `GROQ_API_KEY` and `GROQ_MODEL` |
-| xAI HTTP `429`, timeout, connection failure, or HTTP `5xx` | Transient primary-provider failure | Confirm that the Groq fallback is invoked and inspect provider logs |
-| xAI authentication or configuration error | Invalid key, base URL, model, or provider configuration | Correct the xAI settings; fallback should not occur |
-| Frontend cannot reach backend | Backend is unavailable or `NEXT_PUBLIC_API_BASE_URL` is incorrect | Verify the API on port `8000` and check `frontend/.env` |
-| Browser CORS error | Frontend origin is not permitted | Add the origin to `CORS_ORIGINS` and restart the API |
-| Manual is never searchable | Ingestion failed, remained pending, or the filename did not map to a device | Re-run seeding and inspect ingestion logs |
-| `no extractable text found` | Manual is an image-only scan | Replace it with a text-based or OCR-processed PDF |
-| First request is slow | Embedding model is downloading or loading | Allow initialization to complete; later requests should be faster |
-| Enrichment is slow or consumes excessive tokens | Per-chunk LLM enrichment is enabled | Set `ENABLE_GRAPH_ENRICHMENT=false` during development |
-| Port already in use | Another process is using a required port | Stop the conflicting process or update Docker port mappings |
-| HTTP `429` from FacilityGraph AI | Application rate limit exceeded | Wait for the rate-limit window and use backoff |
+| Low confidence or no citations | Weak retrieval, missing evidence, or unsuitable route | Inspect `router.decisions`, matched entities, retrieval results, and citation logs |
+| Incorrect route | Rules were inconclusive or entity matching failed | Inspect fired cues, route margin, fallback decision, and entity matches |
+| HTTP `403` on `POST /incidents` | User role is `operator` | Use a technician or admin user |
+| HTTP `409` on `POST /devices/replace` | Replacement precondition failed | Read `failed_step` and `reason`; verify rollback |
+| `/healthz` fails | API process failed or did not start | Inspect `docker compose logs api` |
+| `/readyz` returns `503` | Neo4j or Weaviate is unavailable | Run `docker compose ps`, then inspect dependency logs |
+| Weaviate connection error | REST or gRPC connectivity is unavailable | Verify ports `8080` and `50051` |
+| Neo4j connection error | Container is unhealthy or credentials are wrong | Inspect `docker compose logs neo4j` |
+| Missing xAI configuration | Root `.env` is incomplete | Set `XAI_API_KEY`, `XAI_BASE_URL`, and `XAI_MODEL` |
+| Missing Groq configuration | Fallback settings are incomplete | Set `GROQ_API_KEY` and `GROQ_MODEL` |
+| xAI returns `429`, timeout, connection failure, or `5xx` | Transient primary-provider failure | Confirm that Groq fallback is invoked |
+| xAI authentication or configuration error | Invalid key, URL, or model | Correct the xAI configuration; fallback should not occur |
+| `ModuleNotFoundError` inside the API container | Docker image is stale | Rebuild the API image with `--no-cache` |
+| Manual is not linked to a device | Filename does not map to a device, model, or alias | Rename the file using the catalog convention |
+| `no extractable text found` | PDF is an image-only scan | Replace it with a text-based or OCR-processed PDF |
+| Ingestion remains pending | Previous run was interrupted | Re-run the ingestion pipeline |
+| Frontend cannot reach backend | Backend is unavailable or API URL is incorrect | Verify port `8000` and rebuild the frontend after URL changes |
+| Browser CORS error | Frontend origin is not permitted | Update `CORS_ORIGINS` and restart the API |
+| First request is slow | Embedding model is loading or downloading | Allow initialization to finish |
+| Enrichment is slow or expensive | Per-chunk LLM enrichment is enabled | Set `ENABLE_GRAPH_ENRICHMENT=false` during development |
+| `/chat` is unusually slow | Provider retries, fallback, cold model, or reranker overhead | Inspect API logs and confirm `RERANK_ENABLED` |
+| Port already in use | Another process uses a required port | Stop the conflicting process or update Docker mappings |
+| Docker rebuild downloads everything | Build cache was evicted or removed | Check `docker system df` and clean unused images carefully |
 
 ---
 
 ## 11. Recovery Procedures
 
-## 11.1 Recover a single service
-
-Restart the affected service first:
+### 11.1 Recover one service
 
 ```bash
 docker compose restart <service>
-```
-
-Then inspect its status and logs:
-
-```bash
 docker compose ps
 docker compose logs --tail=100 <service>
 ```
 
-Avoid resetting the complete environment until service-level recovery has
-failed.
+Attempt service-level recovery before resetting the full environment.
 
-## 11.2 Recover from a failed device replacement
+### 11.2 Recover from a failed device replacement
 
-Device replacement is transactional. On failure:
+1. Read the HTTP `409` response.
+2. Find the `X-Request-ID`.
+3. Inspect the related API logs.
+4. Confirm that the old graph state remains intact.
+5. Correct the failed precondition.
+6. Retry the operation.
 
-1. Inspect the HTTP `409` response.
-2. Confirm the old device and relationships are unchanged.
-3. Review the relevant API logs using `X-Request-ID`.
-4. Correct the failed precondition.
-5. Retry the operation.
-
-Do not manually repair Neo4j unless transaction rollback verification shows an
+Do not manually repair Neo4j unless rollback verification reveals an
 unexpected state.
 
-## 11.3 Recover ingestion
-
-Re-run the idempotent seed process:
+### 11.3 Recover ingestion
 
 ```bash
-bash scripts/seed_all.sh
+docker compose exec api python -m app.ingestion.pipeline
 ```
 
-The ingestion manifest detects unchanged, changed, and pending documents.
-
-To force a complete re-ingestion:
+For a new device:
 
 ```bash
-rm -f data/ingest_manifest.sqlite
-bash scripts/seed_all.sh
+docker compose exec api python -m app.graph.graph_loader
+docker compose exec api python -m app.ingestion.pipeline
 ```
 
-> **Caution:** Removing the manifest forces the system to process all eligible
-> content again.
+The manifest detects unchanged, changed, and pending documents.
 
-## 11.4 Rebuild vector data
-
-When the Weaviate index is corrupted or intentionally reset:
-
-```bash
-docker compose down
-docker volume ls
-```
-
-Use the project-specific volume names to remove only the intended Weaviate
-data, then restart and reseed. For a complete local reset:
+### 11.4 Full reset
 
 ```bash
 docker compose down -v
 rm -f data/ingest_manifest.sqlite
 docker compose up -d --build
-bash scripts/seed_all.sh
-```
-
-## 11.5 Full environment reset
-
-```bash
-docker compose down -v
-rm -f data/ingest_manifest.sqlite
-docker compose up -d --build
-bash scripts/seed_all.sh
+docker compose exec api python -m app.graph.graph_loader
+docker compose exec api python -m app.ingestion.pipeline
 docker compose ps
 curl http://localhost:8000/healthz
 curl -i http://localhost:8000/readyz
 ```
+
+> **Important:** `data/ingest_manifest.sqlite` is a bind-mounted file rather
+> than a Docker volume. Removing Docker volumes alone does not reset the
+> ingestion manifest.
 
 ---
 
@@ -608,19 +598,19 @@ curl -i http://localhost:8000/readyz
 
 The backend writes structured operational logs to standard output.
 
-Important log events include:
+Important events include:
 
 | Event | Purpose |
 |---|---|
-| `router.decisions` | Chosen route, router confidence, decision mechanism, and matched entities |
-| Provider call events | Selected provider, model, latency, status, and token usage where available |
-| Retrieval events | Vector and graph retrieval details |
-| Citation assembly events | Citation mapping and unsupported-content handling |
+| `router.decisions` | Selected route, router confidence, mechanism, and matched entities |
+| Provider events | Selected provider, model, retries, fallback, latency, and status |
+| Retrieval events | Graph and vector retrieval behavior |
+| Citation events | Marker validation and unsupported-span detection |
 | Confidence events | Retrieval, graph, and final confidence signals |
-| Ingestion events | Document state, chunking, embedding, enrichment, and manifest updates |
-| Request completion events | Status, latency, and `X-Request-ID` |
+| Ingestion events | Document status, chunking, embedding, enrichment, and manifest updates |
+| Request completion | Status, latency, and `X-Request-ID` |
 
-Router decision mechanisms may include:
+Router mechanisms may include:
 
 - `rules`
 - `llm_fallback`
@@ -632,19 +622,19 @@ Enable detailed logs:
 LOG_LEVEL=DEBUG
 ```
 
-Use debug logging temporarily. Avoid leaving sensitive prompts, secrets, or
-excessive payload details in shared logs.
+Use debug logging temporarily. Avoid exposing secrets or excessive sensitive
+payload details in shared logs.
 
-### Recommended log investigation order
+### Recommended investigation order
 
 1. Find the `X-Request-ID`.
 2. Confirm the request reached the API.
-3. Inspect the routing decision.
+3. Inspect entity matching and routing.
 4. Inspect graph and vector retrieval.
 5. Check xAI and Groq provider events.
 6. Inspect citation assembly.
 7. Inspect confidence calculation.
-8. Confirm the final HTTP status and latency.
+8. Confirm the final status and latency.
 
 ---
 
@@ -652,35 +642,35 @@ excessive payload details in shared logs.
 
 Neo4j and Weaviate use Docker named volumes.
 
-Data is preserved when running:
+Data is preserved with:
 
 ```bash
 docker compose down
 ```
 
-Data is removed when running:
+Data is removed with:
 
 ```bash
 docker compose down -v
 ```
 
-The current project is designed for local and demonstration environments and
-does not include a complete managed backup and restore workflow.
+The current deployment is intended for local and demonstration use and does
+not include a complete managed backup and restore process.
 
-Before production-style deployment, add:
+Before production-style use, add:
 
 - Scheduled Neo4j backups
 - Weaviate backup procedures
-- Off-host backup storage
+- Off-host storage
 - Restore testing
-- Backup retention rules
+- Retention rules
 - Secret management
-- Access control and audit logging
-- Environment-specific configuration
+- Audit logging
+- Environment-specific access controls
 
-The source CSV files, manuals, and ingestion process provide a reproducible
-path for rebuilding local data, but they are not a substitute for a tested
-production backup strategy.
+Source CSV files, manuals, and the ingestion process provide a reproducible
+local rebuild path, but they are not a substitute for a tested production
+backup strategy.
 
 ---
 
@@ -688,14 +678,14 @@ production backup strategy.
 
 - Never commit API keys or `.env`.
 - Replace default Neo4j credentials outside local development.
-- Use the mock user header only in trusted development and demo environments.
+- Use mock-user headers only in trusted development and demo environments.
 - Restrict CORS origins.
 - Keep rate limiting enabled.
-- Do not expose Neo4j, Weaviate, or internal metrics publicly without controls.
-- Avoid logging secrets, authorization headers, or complete sensitive prompts.
+- Do not expose Neo4j, Weaviate, or metrics publicly without controls.
+- Avoid logging secrets, authorization headers, or sensitive prompts.
+- Treat `docker compose down -v` as destructive.
+- Validate provider fallback after LLM configuration changes.
 - Review dependency and container updates before production use.
-- Treat `docker compose down -v` as a destructive command.
-- Validate provider fallback behavior after changing LLM configuration.
 
 ---
 
@@ -708,20 +698,15 @@ production backup strategy.
 | End-to-end pipeline, ingestion, architecture coordination, and evaluation | Amer Almajali |
 | Evaluation framework, metrics, monitoring, and baseline comparison | Mohammad Zalloum |
 
-Before publishing or presenting this runbook, confirm that ownership still
-matches the team’s current responsibilities.
-
-### Escalation information to provide
-
-Include the following when escalating an issue:
+When escalating an issue, provide:
 
 - Date and time
 - Environment
-- Affected endpoint or service
+- Affected service or endpoint
 - `X-Request-ID`
 - HTTP status
-- Relevant log excerpt
-- Recent deployment or configuration changes
+- Relevant logs
+- Recent code or configuration changes
 - Steps already attempted
 - User-visible impact
 
@@ -730,7 +715,7 @@ Include the following when escalating an issue:
 ## 16. Quick Command Reference
 
 ```bash
-# Build and start the full stack
+# Start the complete stack
 docker compose up -d --build
 
 # Check service status
@@ -743,11 +728,14 @@ curl -i http://localhost:8000/readyz
 # Follow API logs
 docker compose logs -f api
 
-# Seed or re-ingest data
-bash scripts/seed_all.sh
+# Load the graph
+docker compose exec api python -m app.graph.graph_loader
 
-# Run smoke verification
-python scripts/smoke_test.py
+# Ingest manuals and incidents
+docker compose exec api python -m app.ingestion.pipeline
+
+# Run unit tests
+PYTHONPATH=backend pytest -q backend/tests
 
 # Run focused validation
 python -m compileall -q backend/app backend/tests
@@ -761,5 +749,5 @@ docker compose down
 docker compose down -v
 rm -f data/ingest_manifest.sqlite
 docker compose up -d --build
-bash scripts/seed_all.sh
-```
+docker compose exec api python -m app.graph.graph_loader
+docker compose exec api python -m app.ingestion.pipeline
