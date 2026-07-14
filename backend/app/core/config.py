@@ -1,7 +1,7 @@
 """
 config.py — THE single configuration module.
 
-Every connection detail (Neo4j, Weaviate, xAI, Groq, embedding model) is read here,
+Every connection detail (Neo4j, Weaviate, Grok/xAI, Groq, embedding model) is read here,
 from environment variables (populated by the local .env file in Stage 1).
 No other module in the project may read os.environ or build a connection
 string.  This is what makes the future Stage 2 migration a pure
@@ -32,16 +32,26 @@ load_dotenv(_PROJECT_ROOT / ".env")
 
 
 class Settings(BaseSettings):
-    """Typed application settings. Fails fast when xAI or Groq credentials
-    are missing; everything else has working local-stack defaults."""
+    """Typed application settings.  Fails fast at startup if XAI_API_KEY or
+    GROQ_API_KEY is missing; everything else has working local-stack
+    defaults."""
 
-    # --- xAI / Grok 4.5 (primary LLM) ---
+    # --- xAI Grok (primary LLM) ---
     xai_api_key: str
-    xai_base_url: str = "https://api.x.ai/v1"
     xai_model: str = "grok-4.5"
+    xai_base_url: str = "https://api.x.ai/v1"
 
-    # --- Groq / Llama 4 Scout (fallback LLM) ---
+    # --- Groq (fallback LLM, used only when Grok is rate-limited/unavailable
+    # in the answer-generation path). Stays a REQUIRED key (not optional,
+    # unlike the old Gemini fallback) because it's also called
+    # unconditionally elsewhere: the router's cheap LLM-fallback classifier
+    # (llm_fallback.py) and graph-enrichment extraction (extractor.py) both
+    # go straight to Groq regardless of which provider answers /chat. ---
     groq_api_key: str
+    # llama-4-scout, as specified. NOTE: Groq has this on its deprecation
+    # list — shutdown date 07/17/26 — with openai/gpt-oss-120b or
+    # qwen/qwen3.6-27b as the recommended replacements. Set here as
+    # requested; will start failing after the shutdown date.
     groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     # --- Neo4j ---
@@ -102,6 +112,11 @@ class Settings(BaseSettings):
     hash_store_path: str = str(_PROJECT_ROOT / "data" / "ingest_manifest.sqlite")
     enable_graph_enrichment: bool = True
     extraction_char_limit: int = 6000  # chunk text sent to the enrichment LLM
+    extraction_call_delay_seconds: float = 0.0  # was 1.5s pacing between
+    # enrichment/eval LLM calls to protect Groq's per-minute rate limit;
+    # removed by request. If Grok/Groq starts 429-ing under load, the
+    # @retry(wait_exponential(...)) decorators on the call sites still back
+    # off automatically — raise this back up if that's not enough.
     log_level: str = "INFO"
 
     @property
@@ -115,7 +130,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()  # raises a clear ValidationError if required LLM keys are missing
+    return Settings()  # raises a clear ValidationError if GROQ_API_KEY missing
 
 
 # ---------------------------------------------------------------------------
@@ -150,20 +165,28 @@ def get_weaviate_client():
 
 
 @lru_cache
-def get_xai_client():
-    """OpenAI-compatible xAI client for the primary Grok 4.5 provider."""
-    from openai import OpenAI
-
-    s = get_settings()
-    return OpenAI(api_key=s.xai_api_key, base_url=s.xai_base_url)
-
-
-@lru_cache
 def get_groq_client():
-    """Groq client for the Llama 4 Scout fallback provider."""
+    """Fallback LLM client. GROQ_API_KEY is a required setting, so this
+    always has a key by the time Settings validates."""
     from groq import Groq
 
     return Groq(api_key=get_settings().groq_api_key)
+
+
+@lru_cache
+def get_xai_client():
+    """Primary LLM client. xAI's Grok API is OpenAI-compatible, so we reuse
+    the `openai` SDK (already a project dependency) pointed at xAI's base
+    URL rather than hand-rolling request/response handling. This gives
+    groq_client.py's `.chat.completions.create(...)` calls (both plain and
+    `stream=True`) an object with the exact same shape the Groq SDK client
+    already has, so both providers can share the same call sites.
+    XAI_API_KEY is a required setting, so this always has a key by the time
+    Settings validates."""
+    from openai import OpenAI
+
+    s = get_settings()
+    return OpenAI(api_key=s.xai_api_key, base_url=s.xai_base_url, timeout=60.0)
 
 
 @lru_cache
@@ -230,3 +253,10 @@ def close_all_clients() -> None:
         except Exception:
             pass
         get_weaviate_client.cache_clear()
+    # xAI (the openai.OpenAI client holds an httpx connection pool internally)
+    if get_xai_client.cache_info().currsize:
+        try:
+            get_xai_client().close()
+        except Exception:
+            pass
+        get_xai_client.cache_clear()
