@@ -10,6 +10,12 @@ RUN npm ci
 
 COPY . .
 
+# Next.js doesn't require a public/ folder to build, and git doesn't track
+# empty directories — so a fresh checkout can legitimately be missing it,
+# which would otherwise hard-fail the runner stage's COPY below. Guarantee
+# it exists before build.
+RUN mkdir -p public
+
 # NEXT_PUBLIC_* is baked in at build time; the compose build arg supplies it.
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL

@@ -58,6 +58,21 @@ Chunk:
 \"\"\"{chunk}\"\"\""""
 
 
+def _describe_llm_error(exc: Exception) -> str:
+    """tenacity's RetryError.__str__() only says 'raised ...Error', hiding
+    the actual server-side reason behind a useless repr. Unwrap to the real
+    underlying exception so a bad request is actually diagnosable from the
+    log instead of just 'skipped: RetryError[...]'."""
+    inner = exc
+    last_attempt = getattr(exc, "last_attempt", None)
+    if last_attempt is not None:
+        try:
+            inner = last_attempt.exception()
+        except Exception:
+            pass
+    return str(inner)
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 def _call_llm(chunk_text: str, device_name: str) -> dict:
     return generate_json(
@@ -185,12 +200,27 @@ def enrich_document(document_id: str, chunk_objects: list[dict]) -> int:
             device_ids=device_ids,
         )
 
+        # Small pacing delay between enrichment calls. Provider rate limits
+        # are per-minute; one call per chunk back-to-back with no pacing
+        # trips 429s repeatedly on any manual with more than a handful of
+        # chunks, burning time in tenacity's exponential backoff instead of
+        # just... not hitting the limit in the first place.
+        import time
+
+        delay = get_settings().extraction_call_delay_seconds
+
         for obj in chunk_objects:
             try:
                 raw = _call_llm(obj["text"], obj["device_name"])
             except Exception as exc:  # best-effort per chunk
-                log.warning("enrichment skipped for chunk %s: %s", obj["chunk_id"], exc)
+                log.warning(
+                    "enrichment skipped for chunk %s: %s",
+                    obj["chunk_id"],
+                    _describe_llm_error(exc),
+                )
                 continue
+            finally:
+                time.sleep(delay)
             triples = _validate(raw, obj["text"], obj["device_name"])
             if not triples:
                 continue

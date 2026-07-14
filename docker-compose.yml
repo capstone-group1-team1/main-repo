@@ -13,15 +13,15 @@ services:
     image: neo4j:5.26
     container_name: smartoffice-neo4j
     ports:
-      - "7474:7474"   # browser UI
-      - "7687:7687"   # bolt
+      - "7474:7474" # browser UI
+      - "7687:7687" # bolt
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-smartoffice123}
       NEO4J_dbms_memory_heap_max__size: 1G
     volumes:
       - neo4j_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -40,7 +40,7 @@ services:
     volumes:
       - weaviate_data:/var/lib/weaviate
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -52,6 +52,17 @@ services:
     container_name: smartoffice-api
     ports:
       - "8000:8000"
+    env_file:
+      # Loads every setting from .env into the container automatically —
+      # RERANK_*, HYBRID_SEARCH_*, RATE_LIMIT_*, RETRIEVAL_CACHE_*, GRAPH_*,
+      # ROUTER_*, CHUNK_*, etc. docker-compose does NOT inject the root .env
+      # into a container unless referenced via `env_file` or listed under
+      # `environment:` — without this, those settings silently fell back to
+      # hardcoded defaults regardless of what .env said. The explicit
+      # `environment:` block below still wins over env_file for the values
+      # that must differ from .env's localhost-oriented defaults (Neo4j/
+      # Weaviate hostnames, CORS origin, PROJECT_ROOT, HF_HOME).
+      - .env
     environment:
       # Inside the compose network, reach the stores by service name.
       XAI_API_KEY: ${XAI_API_KEY}
@@ -90,7 +101,7 @@ services:
         condition: service_healthy
     healthcheck:
       # python:slim has no curl — use stdlib urllib against the liveness probe.
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)" ]
       interval: 10s
       timeout: 5s
       retries: 15

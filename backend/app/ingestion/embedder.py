@@ -26,5 +26,7 @@ def embed_query(question: str) -> list[float]:
     """Embed a search query.  bge models want the instruction prefix on
     queries only — this asymmetry is the model's documented usage."""
     model = get_embed_model()
-    vec = model.encode(BGE_QUERY_PREFIX + question, normalize_embeddings=True)
+    vec = model.encode(
+        BGE_QUERY_PREFIX + question, normalize_embeddings=True, show_progress_bar=False
+    )
     return vec.tolist()

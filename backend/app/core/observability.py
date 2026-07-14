@@ -32,18 +32,44 @@ from starlette.requests import Request
 # request_id available to any log call during a request without passing it
 # through every function signature.
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "request_id", default="-")
+    "request_id", default="-"
+)
 
 # --- the three metrics (declared once, at import) --------------------------
-REQUESTS_TOTAL = Counter(
-    "requests_total", "Total HTTP requests", ["path", "status"])
+REQUESTS_TOTAL = Counter("requests_total", "Total HTTP requests", ["path", "status"])
 REQUEST_LATENCY_SECONDS = Histogram(
-    "request_latency_seconds", "Request latency in seconds", ["path"],
-    # buckets span 5 ms .. 10 s: fine at the fast end (graph/device reads),
-    # coarse at the slow end (LLM synthesis on /chat, ~1-3 s).
-    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10])
-INFLIGHT_REQUESTS = Gauge(
-    "inflight_requests", "In-flight requests")
+    "request_latency_seconds",
+    "Request latency in seconds",
+    ["path"],
+    # buckets span 5 ms .. 50 s: fine-grained at the fast end (graph/device
+    # reads), and now more resolution above 1s too — /chat runs the
+    # cross-encoder reranker (scoring up to `rerank_candidate_pool`
+    # candidates) on top of Weaviate hybrid search and LLM synthesis, which
+    # regularly pushes it into the 3-15 s range, and /chat/stream holds its
+    # connection open for the full streamed answer on top of that. The old
+    # ceiling of 10s bucketed anything slower straight into +Inf, which
+    # flattened p95 on both endpoints.
+    buckets=[
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2,
+        5,
+        7.5,
+        10,
+        15,
+        20,
+        30,
+        40,
+        50,
+    ],
+)
+INFLIGHT_REQUESTS = Gauge("inflight_requests", "In-flight requests")
 
 _access_log = logging.getLogger("app.access")
 
@@ -65,15 +91,19 @@ class StructuredLoggingMiddleware(BaseHTTPMiddleware):
         started = time.perf_counter()
         response = await call_next(request)
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
-        _access_log.info(json.dumps({
-            "ts": time.time(),
-            "level": "INFO",
-            "request_id": request_id_var.get(),
-            "method": request.method,
-            "path": request.url.path,
-            "status": response.status_code,
-            "latency_ms": latency_ms,
-        }))
+        _access_log.info(
+            json.dumps(
+                {
+                    "ts": time.time(),
+                    "level": "INFO",
+                    "request_id": request_id_var.get(),
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": response.status_code,
+                    "latency_ms": latency_ms,
+                }
+            )
+        )
         return response
 
 

@@ -46,7 +46,7 @@ def rerank(question: str, items: list[Evidence], top_n: int) -> list[Evidence]:
 
     try:
         pairs = [(question, _text_of(it)) for it in items]
-        scores = model.predict(pairs)
+        scores = model.predict(pairs, show_progress_bar=False)
         ranked = sorted(zip(items, scores), key=lambda p: float(p[1]), reverse=True)
         log.info("reranked %d evidence items -> top %d", len(items), top_n)
         return [it for it, _ in ranked[:top_n]]

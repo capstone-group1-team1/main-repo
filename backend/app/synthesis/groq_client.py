@@ -88,7 +88,9 @@ def _generate(system: str, user: str, temperature: float, primary_call, fallback
         return primary_call(system, user, temperature)
     except Exception as primary_exc:
         if not _is_transient_xai_error(primary_exc):
-            raise LLMUnavailable(f"xAI request failed ({_error_label(primary_exc)})") from primary_exc
+            raise LLMUnavailable(
+                f"xAI request failed ({_error_label(primary_exc)})"
+            ) from primary_exc
         log.warning(
             "LLM fallback: primary=xAI error=%s fallback=Groq model=%s",
             _error_label(primary_exc),
@@ -116,3 +118,84 @@ def generate_json(system: str, user: str, temperature: float = 0.0) -> dict:
 def generate(system: str, user: str, temperature: float = 0.1) -> str:
     """Compatibility wrapper for existing answer-path callers."""
     return generate_text(system, user, temperature)
+
+
+# ---------------------------------------------------------------------------
+# Streaming
+# ---------------------------------------------------------------------------
+#
+# Same xAI-primary/Groq-fallback contract as generate(), with one honest
+# limitation: the fallback only applies BEFORE the first token is yielded
+# (the case that covers the vast majority of failures — they happen on the
+# initial request, before any streaming has started). If xAI's stream fails
+# PARTWAY through an answer, switching providers mid-sentence would produce
+# a visibly broken answer, so we log the error and end the stream there
+# instead — the caller still has whatever text streamed successfully.
+#
+# NOTE: unlike generate_text()/generate_json(), streamed deltas are NOT
+# passed through output_guard.final_content(). Stripping a <think>...</think>
+# block requires seeing the whole block at once, which defeats token-by-token
+# streaming. This mirrors the existing assumption that reasoning is kept out
+# of visible output at the provider level; if a provider ever regresses on
+# that, it would currently surface in a streamed answer where it wouldn't in
+# a non-streamed one.
+
+
+def _stream_xai(system: str, user: str, temperature: float):
+    stream = get_xai_client().chat.completions.create(
+        model=get_settings().xai_model,
+        messages=_messages(system, user),
+        temperature=temperature,
+        max_tokens=800,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
+def _stream_groq(system: str, user: str, temperature: float):
+    stream = get_groq_client().chat.completions.create(
+        model=get_settings().groq_model,
+        messages=_messages(system, user),
+        temperature=temperature,
+        max_tokens=800,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
+def generate_stream(system: str, user: str, temperature: float = 0.1):
+    """Streaming counterpart of generate_text(): yields text chunks as they
+    arrive instead of returning the full string at once."""
+    started = False
+    try:
+        for token in _stream_xai(system, user, temperature):
+            started = True
+            yield token
+    except Exception as xai_exc:
+        if started:
+            log.error(
+                "xAI stream failed mid-answer (%s) — ending stream early", xai_exc
+            )
+            return
+        if not _is_transient_xai_error(xai_exc):
+            raise LLMUnavailable(
+                f"xAI request failed ({_error_label(xai_exc)})"
+            ) from xai_exc
+        log.warning(
+            "LLM stream fallback: primary=xAI error=%s fallback=Groq model=%s",
+            _error_label(xai_exc),
+            get_settings().groq_model,
+        )
+        try:
+            yield from _stream_groq(system, user, temperature)
+        except Exception as groq_exc:
+            raise LLMUnavailable(
+                f"xAI request failed ({_error_label(xai_exc)}); "
+                f"Groq fallback failed ({_error_label(groq_exc)})"
+            ) from groq_exc
